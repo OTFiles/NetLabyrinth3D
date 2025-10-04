@@ -1,4 +1,5 @@
 #include "Logger.h"
+#include "GlobalState.h"
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -127,13 +128,22 @@ void Logger::log(LogLevel level, LogCategory category, const std::string& messag
     
     // 输出到控制台
     if (consoleOutput_) {
-        // 保存当前光标位置并移动到新行输出日志
-        std::cout << "\033[s"; // 保存光标位置
-        std::cout << "\033[K"; // 清除当前行
-        std::cout << std::endl; // 换到新行
-        outputToConsole(level, fullMessage);
-        std::cout << "\033[u"; // 恢复光标位置
-        std::cout.flush();
+        // 如果有命令正在输入，先清除命令行再输出日志，然后重新显示命令提示符
+        if (g_commandInputInProgress) {
+            // 保存当前光标位置
+            std::cout << "\033[s";
+            // 移动到行首并清除当前行
+            std::cout << "\r\033[K";
+            // 输出日志
+            outputToConsole(level, fullMessage);
+            // 恢复光标位置并重新显示命令提示符
+            std::cout << "\033[u";
+            std::cout.flush();
+        } else {
+            // 直接输出日志
+            outputToConsole(level, fullMessage);
+            std::cout.flush();
+        }
     }
     
     // 输出到文件
@@ -348,8 +358,9 @@ void Logger::outputToConsole(LogLevel level, const std::string& message) {
     }
     
     SetConsoleTextAttribute(hConsole, textColor);
-    std::cout << message << std::endl;
+    std::cout << message;
     SetConsoleTextAttribute(hConsole, originalColor);
+    std::cout << std::endl;
 #else
     std::string colorCode = levelColors_.at(level);
     std::string resetCode = "\033[0m";

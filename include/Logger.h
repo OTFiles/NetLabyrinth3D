@@ -82,6 +82,9 @@ private:
     Logger(const Logger&) = delete;
     Logger& operator=(const Logger&) = delete;
     
+    // 输出到控制台（带颜色）
+    void outputToConsole(LogLevel level, const std::string& message);
+    
     // 获取当前时间字符串
     std::string getCurrentTimeString() const;
     
@@ -102,9 +105,6 @@ private:
     
     // 写入日志到文件
     void writeToFile(const std::string& logMessage);
-    
-    // 输出到控制台（带颜色）
-    void outputToConsole(LogLevel level, const std::string& message);
 
 private:
     std::ofstream logFile_;

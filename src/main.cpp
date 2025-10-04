@@ -16,9 +16,12 @@
 #include "NetworkManager.h"
 #include "CommandSystem.h"
 #include "WebServer.h"
+#include "GlobalState.h"
 
-// 全局变量用于优雅关闭
-std::atomic<bool> g_shutdownRequested(false);
+// 全局变量声明
+extern std::atomic<bool> g_shutdownRequested;
+extern std::atomic<bool> g_commandInputInProgress;
+extern std::string g_currentInputLine;
 
 // 信号处理函数
 void signalHandler(int signal) {
@@ -87,9 +90,13 @@ CommandLineArgs parseCommandLine(int argc, char* argv[]) {
 void consoleCommandThread(CommandSystem& commandSystem) {
     std::string input;
     while (!g_shutdownRequested) {
+        g_commandInputInProgress = true;
+        
         // 使用更明显的提示符
         std::cout << "\033[1;32m命令>\033[0m ";
         std::getline(std::cin, input);
+        
+        g_commandInputInProgress = false;
         
         if (input.empty()) continue;
         
@@ -297,6 +304,7 @@ int main(int argc, char* argv[]) {
         std::cout << "  - http://localhost:" << args.port << "/api/status" << std::endl;
         std::cout << "输入 'quit' 或 'exit' 退出服务器" << std::endl;
         std::cout << "输入命令进行管理操作" << std::endl;
+        std::cout << std::endl; // 添加空行分隔
         
         // 启动控制台命令线程
         std::thread consoleThread(consoleCommandThread, std::ref(*commandSystem));
@@ -312,19 +320,6 @@ int main(int argc, char* argv[]) {
             if (elapsedTime >= updateInterval) {
                 // 更新游戏逻辑
                 gameLogic->Update();
-                
-                // 定期输出连接状态
-                static auto lastStatusTime = std::chrono::steady_clock::now();
-                auto statusElapsed = currentTime - lastStatusTime;
-                if (statusElapsed >= std::chrono::seconds(30)) {
-                    int connectedCount = networkManager.getConnectedClientsCount();
-                    Logger::getInstance().info(LogCategory::NETWORK, 
-                        "连接状态统计 - 当前连接数: " + std::to_string(connectedCount) +
-                        " | 总玩家数: " + std::to_string(playerManager->GetPlayerCount()) +
-                        " | 在线玩家: " + std::to_string(playerManager->GetOnlinePlayerCount()));
-                    lastStatusTime = currentTime;
-                }
-                
                 lastUpdateTime = currentTime;
             }
             

@@ -229,9 +229,9 @@ void NetworkManager::Impl::handleNewConnection(SOCKET clientSocket, const std::s
             
             // 详细记录连接信息
             Logger::getInstance().info(LogCategory::NETWORK, 
-                "客户端连接成功 - IP: " + clientIp + 
-                " | ID: " + std::to_string(clientId) + 
-                " | 总连接数: " + std::to_string(clients.size()));
+                "WebSocket客户端连接 - IP: " + clientIp + 
+                " | 客户端ID: " + std::to_string(clientId) + 
+                " | 当前连接数: " + std::to_string(clients.size()));
             
             // 通知回调
             if (messageCallback) {
@@ -239,12 +239,10 @@ void NetworkManager::Impl::handleNewConnection(SOCKET clientSocket, const std::s
             }
         } else {
             Logger::getInstance().warning(LogCategory::NETWORK, 
-                "WebSocket握手失败 - IP: " + clientIp + " | 原因: 无效的握手请求");
+                "WebSocket握手失败 - IP: " + clientIp);
             closesocket(clientSocket);
         }
     } else {
-        Logger::getInstance().warning(LogCategory::NETWORK, 
-            "连接建立失败 - IP: " + clientIp + " | 原因: 无法读取握手数据");
         closesocket(clientSocket);
     }
 }

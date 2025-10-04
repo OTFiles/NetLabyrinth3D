@@ -55,6 +55,7 @@ add_executable(server
     src/CommandSystem.cpp
     src/DataManager.cpp
     src/WebServer.cpp
+    src/GlobalState.cpp 
     src/Logger.cpp
 )
 
