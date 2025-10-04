@@ -312,6 +312,19 @@ int main(int argc, char* argv[]) {
             if (elapsedTime >= updateInterval) {
                 // 更新游戏逻辑
                 gameLogic->Update();
+                
+                // 定期输出连接状态
+                static auto lastStatusTime = std::chrono::steady_clock::now();
+                auto statusElapsed = currentTime - lastStatusTime;
+                if (statusElapsed >= std::chrono::seconds(30)) {
+                    int connectedCount = networkManager.getConnectedClientsCount();
+                    Logger::getInstance().info(LogCategory::NETWORK, 
+                        "连接状态统计 - 当前连接数: " + std::to_string(connectedCount) +
+                        " | 总玩家数: " + std::to_string(playerManager->GetPlayerCount()) +
+                        " | 在线玩家: " + std::to_string(playerManager->GetOnlinePlayerCount()));
+                    lastStatusTime = currentTime;
+                }
+                
                 lastUpdateTime = currentTime;
             }
             

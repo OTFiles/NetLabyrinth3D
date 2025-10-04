@@ -127,7 +127,13 @@ void Logger::log(LogLevel level, LogCategory category, const std::string& messag
     
     // 输出到控制台
     if (consoleOutput_) {
+        // 保存当前光标位置并移动到新行输出日志
+        std::cout << "\033[s"; // 保存光标位置
+        std::cout << "\033[K"; // 清除当前行
+        std::cout << std::endl; // 换到新行
         outputToConsole(level, fullMessage);
+        std::cout << "\033[u"; // 恢复光标位置
+        std::cout.flush();
     }
     
     // 输出到文件
