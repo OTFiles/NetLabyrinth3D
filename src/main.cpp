@@ -91,12 +91,38 @@ void consoleCommandThread(CommandSystem& commandSystem) {
     std::string input;
     while (!g_shutdownRequested) {
         g_commandInputInProgress = true;
+        g_currentInputLine.clear();
         
         // 使用更明显的提示符
         std::cout << "\033[1;32m命令>\033[0m ";
-        std::getline(std::cin, input);
+        
+        // 逐字符读取输入，以便实时更新g_currentInputLine
+        char ch;
+        input.clear();
+        while (!g_shutdownRequested) {
+            ch = std::cin.get();
+            
+            if (ch == '\n' || ch == '\r') {
+                // 回车键，结束输入
+                std::cout << std::endl;
+                break;
+            } else if (ch == 127 || ch == 8) { // Backspace
+                if (!input.empty()) {
+                    input.pop_back();
+                    g_currentInputLine = input;
+                    // 移动光标后退，删除字符，再移动光标前进（实际上不需要，因为我们会重新渲染）
+                    std::cout << "\b \b";
+                }
+            } else if (ch >= 32 && ch <= 126) { // 可打印字符
+                input += ch;
+                g_currentInputLine = input;
+                std::cout << ch;
+            }
+            std::cout.flush();
+        }
         
         g_commandInputInProgress = false;
+        g_currentInputLine.clear();
         
         if (input.empty()) continue;
         
