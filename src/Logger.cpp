@@ -128,17 +128,20 @@ void Logger::log(LogLevel level, LogCategory category, const std::string& messag
     
     // 输出到控制台
     if (consoleOutput_) {
-        // 如果有命令正在输入，先清除命令行再输出日志，然后重新显示命令提示符
-        if (g_commandInputInProgress) {
-            // 保存当前光标位置
-            std::cout << "\033[s";
-            // 移动到行首并清除当前行
-            std::cout << "\r\033[K";
+        // 如果有命令正在输入，先换行输出日志，然后重新显示命令提示符
+        if (g_commandInputInProgress && !g_currentInputLine.empty()) {
+            // 先换行到新的一行
+            std::cout << std::endl;
             // 输出日志
             outputToConsole(level, fullMessage);
-            // 恢复光标位置
-            std::cout << "\033[u";
-            // 强制刷新输出缓冲区
+            // 重新显示命令提示符和当前输入的内容
+            std::cout << "\033[1;32m命令>\033[0m " << g_currentInputLine;
+            std::cout.flush();
+        } else if (g_commandInputInProgress) {
+            // 只是命令提示符，没有输入内容
+            std::cout << std::endl;
+            outputToConsole(level, fullMessage);
+            std::cout << "\033[1;32m命令>\033[0m ";
             std::cout.flush();
         } else {
             // 直接输出日志
