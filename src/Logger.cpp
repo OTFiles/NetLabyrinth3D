@@ -136,8 +136,9 @@ void Logger::log(LogLevel level, LogCategory category, const std::string& messag
             std::cout << "\r\033[K";
             // 输出日志
             outputToConsole(level, fullMessage);
-            // 恢复光标位置并重新显示命令提示符
+            // 恢复光标位置
             std::cout << "\033[u";
+            // 强制刷新输出缓冲区
             std::cout.flush();
         } else {
             // 直接输出日志
