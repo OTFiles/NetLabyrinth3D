@@ -95,6 +95,7 @@ void consoleCommandThread(CommandSystem& commandSystem) {
         
         // 使用更明显的提示符
         std::cout << "\033[1;32m命令>\033[0m ";
+        std::cout.flush();
         
         // 逐字符读取输入，以便实时更新g_currentInputLine
         char ch;
@@ -110,15 +111,16 @@ void consoleCommandThread(CommandSystem& commandSystem) {
                 if (!input.empty()) {
                     input.pop_back();
                     g_currentInputLine = input;
-                    // 移动光标后退，删除字符，再移动光标前进（实际上不需要，因为我们会重新渲染）
-                    std::cout << "\b \b";
+                    // 重新显示当前行
+                    std::cout << "\r\033[K\033[1;32m命令>\033[0m " << g_currentInputLine;
+                    std::cout.flush();
                 }
             } else if (ch >= 32 && ch <= 126) { // 可打印字符
                 input += ch;
                 g_currentInputLine = input;
                 std::cout << ch;
+                std::cout.flush();
             }
-            std::cout.flush();
         }
         
         g_commandInputInProgress = false;
