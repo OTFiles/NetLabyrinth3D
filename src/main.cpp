@@ -246,7 +246,7 @@ void consoleCommandThread(CommandSystem& commandSystem) {
         }
         
         // 执行命令
-        CommandResult result = commandSystem.ExecuteCommand(input, "console");
+        CommandResult result = commandSystem.ExecuteCommand(input, "admin");
         std::cout << (result.success ? "\033[1;32m[成功]\033[0m " : "\033[1;31m[失败]\033[0m ") << result.message << std::endl;
     }
     
@@ -450,6 +450,7 @@ int main(int argc, char* argv[]) {
         std::cout << "输入命令进行管理操作" << std::endl;
         std::cout << std::endl; // 添加空行分隔
         
+        logger.info(LogCategory::SYSTEM, "以 Admin 启动命令行");
         // 启动控制台命令线程
         std::thread consoleThread(consoleCommandThread, std::ref(*commandSystem));
         

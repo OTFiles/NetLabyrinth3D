@@ -4,7 +4,259 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>三维迷宫游戏</title>
-    <link rel="stylesheet" href="css/style.css">
+    <style>
+        /* 基础样式 */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #fff;
+            color: #333;
+            transition: background-color 0.3s, color 0.3s;
+        }
+
+        body.dark-mode {
+            background-color: #121212;
+            color: #f0f0f0;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        /* 屏幕容器 */
+        .screen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        /* 登录界面样式 */
+        #loginScreen {
+            background-color: #fff;
+            transition: background-color 0.3s;
+        }
+
+        body.dark-mode #loginScreen {
+            background-color: #121212;
+        }
+
+        .login-content {
+            background-color: #fff;
+            padding: 40px;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+            max-width: 500px;
+            width: 90%;
+            text-align: center;
+            transition: background-color 0.3s, box-shadow 0.3s;
+        }
+
+        body.dark-mode .login-content {
+            background-color: #1e1e1e;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+        }
+
+        .login-content h1 {
+            margin-bottom: 30px;
+            color: #2c3e50;
+            font-size: 28px;
+            transition: color 0.3s;
+        }
+
+        body.dark-mode .login-content h1 {
+            color: #f0f0f0;
+        }
+
+        /* 服务器状态卡片 */
+        .server-status-card {
+            background-color: #f8f9fa;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+            text-align: left;
+            transition: background-color 0.3s;
+        }
+
+        body.dark-mode .server-status-card {
+            background-color: #2d2d2d;
+        }
+
+        .server-status-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+            font-weight: bold;
+            transition: color 0.3s;
+        }
+
+        body.dark-mode .server-status-header {
+            color: #f0f0f0;
+        }
+
+        .refresh-btn {
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 16px;
+            padding: 5px;
+            border-radius: 4px;
+            transition: background-color 0.3s;
+        }
+
+        .refresh-btn:hover {
+            background-color: rgba(0, 0, 0, 0.1);
+        }
+
+        body.dark-mode .refresh-btn:hover {
+            background-color: rgba(255, 255, 255, 0.1);
+        }
+
+        .server-status-content {
+            transition: color 0.3s;
+        }
+
+        body.dark-mode .server-status-content {
+            color: #ddd;
+        }
+
+        .status-online {
+            color: #27ae60;
+        }
+
+        .status-offline {
+            color: #e74c3c;
+        }
+
+        .status-loading {
+            color: #7f8c8d;
+        }
+
+        .input-group {
+            margin-bottom: 20px;
+            text-align: left;
+        }
+
+        .input-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            transition: color 0.3s;
+        }
+
+        body.dark-mode .input-group label {
+            color: #f0f0f0;
+        }
+
+        .input-group input {
+            width: 100%;
+            padding: 12px 15px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 16px;
+            transition: border-color 0.3s, background-color 0.3s, color 0.3s;
+        }
+
+        body.dark-mode .input-group input {
+            background-color: #2d2d2d;
+            border-color: #444;
+            color: #f0f0f0;
+        }
+
+        .input-hint {
+            display: block;
+            margin-top: 5px;
+            font-size: 12px;
+            color: #777;
+            transition: color 0.3s;
+        }
+
+        body.dark-mode .input-hint {
+            color: #aaa;
+        }
+
+        .btn-primary {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 6px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+            margin-top: 10px;
+            width: 100%;
+        }
+
+        .btn-primary:hover {
+            background-color: #2980b9;
+        }
+
+        .tips {
+            margin-top: 30px;
+            text-align: left;
+            padding: 15px;
+            background-color: #f8f9fa;
+            border-radius: 6px;
+            transition: background-color 0.3s;
+        }
+
+        body.dark-mode .tips {
+            background-color: #2d2d2d;
+        }
+
+        .tips h3 {
+            margin-bottom: 10px;
+            color: #2c3e50;
+            transition: color 0.3s;
+        }
+
+        body.dark-mode .tips h3 {
+            color: #f0f0f0;
+        }
+
+        .tips ul {
+            padding-left: 20px;
+        }
+
+        .tips li {
+            margin-bottom: 8px;
+            transition: color 0.3s;
+        }
+
+        body.dark-mode .tips li {
+            color: #ddd;
+        }
+
+        /* 主题切换按钮 */
+        .theme-toggle {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+
+        .theme-toggle:hover {
+            background-color: #2980b9;
+        }
+    </style>
 </head>
 <body>
     <!-- 游戏加载界面 -->
@@ -20,17 +272,21 @@
 
     <!-- 登录界面 -->
     <div id="loginScreen" class="screen hidden">
+        <button class="theme-toggle" id="themeToggle">切换到黑夜模式</button>
         <div class="login-content">
             <h1>欢迎来到三维迷宫</h1>
+            
+            <!-- 服务器状态卡片 -->
             <div class="server-status-card" id="serverStatusCard">
                 <div class="server-status-header">
                     <span>服务器状态</span>
-                    <button id="refreshStatus" class="refresh-btn">🔄</button>
+                    <button id="refreshStatus" class="refresh-btn">刷新</button>
                 </div>
                 <div class="server-status-content" id="serverStatusContent">
                     <div class="status-loading">正在获取服务器状态...</div>
                 </div>
             </div>
+            
             <div class="input-group">
                 <label for="playerName">请输入您的名称：</label>
                 <input type="text" id="playerName" maxlength="20" placeholder="请输入玩家名称(2-20字符)">
@@ -236,11 +492,90 @@
     </div>
 
     <!-- 脚本引入 -->
-    <script src="js/three.js"></script>
-    <script src="js/NetworkClient.js"></script>
-    <script src="js/Renderer3D.js"></script>
-    <script src="js/GameController.js"></script>
-    <script src="js/UIManager.js"></script>
-    <script src="js/main.js"></script>
+    <script>
+        // 黑夜模式切换功能
+        document.addEventListener('DOMContentLoaded', function() {
+            const themeToggle = document.getElementById('themeToggle');
+            const body = document.body;
+            
+            // 检查本地存储中的主题设置
+            if (localStorage.getItem('darkMode') === 'true') {
+                body.classList.add('dark-mode');
+                themeToggle.textContent = '切换到白天模式';
+            }
+            
+            themeToggle.addEventListener('click', function() {
+                body.classList.toggle('dark-mode');
+                
+                if (body.classList.contains('dark-mode')) {
+                    themeToggle.textContent = '切换到白天模式';
+                    localStorage.setItem('darkMode', 'true');
+                } else {
+                    themeToggle.textContent = '切换到黑夜模式';
+                    localStorage.setItem('darkMode', 'false');
+                }
+            });
+            
+            // 服务器状态检查功能
+            const refreshStatusBtn = document.getElementById('refreshStatus');
+            const serverStatusContent = document.getElementById('serverStatusContent');
+            
+            function checkServerStatus() {
+                serverStatusContent.innerHTML = '<div class="status-loading">正在获取服务器状态...</div>';
+                
+                // 模拟服务器状态检查
+                setTimeout(() => {
+                    // 这里应该是实际的服务器状态检查逻辑
+                    // 现在使用随机状态模拟
+                    const isOnline = Math.random() > 0.3;
+                    
+                    if (isOnline) {
+                        serverStatusContent.innerHTML = '<div class="status-online">● 服务器在线</div>';
+                    } else {
+                        serverStatusContent.innerHTML = '<div class="status-offline">● 服务器离线</div>';
+                    }
+                }, 1000);
+            }
+            
+            refreshStatusBtn.addEventListener('click', checkServerStatus);
+            
+            // 初始检查服务器状态
+            checkServerStatus();
+            
+            // 连接按钮功能
+            const connectButton = document.getElementById('connectButton');
+            const playerNameInput = document.getElementById('playerName');
+            const serverAddressInput = document.getElementById('serverAddress');
+            
+            connectButton.addEventListener('click', function() {
+                const playerName = playerNameInput.value.trim();
+                const serverAddress = serverAddressInput.value.trim();
+                
+                if (playerName.length < 2 || playerName.length > 20) {
+                    alert('玩家名称长度必须在2-20个字符之间');
+                    return;
+                }
+                
+                if (!serverAddress) {
+                    alert('请输入服务器地址');
+                    return;
+                }
+                
+                // 这里应该是实际的连接逻辑
+                console.log(`尝试连接到服务器: ${serverAddress}, 玩家: ${playerName}`);
+                
+                // 模拟连接过程
+                document.getElementById('loginScreen').classList.add('hidden');
+                document.getElementById('gameScreen').classList.remove('hidden');
+                document.getElementById('playerNameDisplay').textContent = playerName;
+            });
+            
+            // 模拟加载过程
+            setTimeout(() => {
+                document.getElementById('loadingScreen').classList.add('hidden');
+                document.getElementById('loginScreen').classList.remove('hidden');
+            }, 2000);
+        });
+    </script>
 </body>
 </html>
