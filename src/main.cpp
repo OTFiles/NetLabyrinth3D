@@ -23,6 +23,101 @@ extern std::atomic<bool> g_shutdownRequested;
 extern std::atomic<bool> g_commandInputInProgress;
 extern std::string g_currentInputLine;
 
+// 平台相关的终端设置
+#ifdef _WIN32
+#include <conio.h>
+#include <windows.h>
+#else
+#include <termios.h>
+#include <unistd.h>
+#include <sys/ioctl.h>
+#endif
+
+// 跨平台终端设置类
+class TerminalSettings {
+private:
+#ifdef _WIN32
+    DWORD originalMode;
+    HANDLE stdinHandle;
+#else
+    struct termios originalTermios;
+#endif
+    bool isSet;
+
+public:
+    TerminalSettings() : isSet(false) {
+#ifdef _WIN32
+        stdinHandle = GetStdHandle(STD_INPUT_HANDLE);
+        GetConsoleMode(stdinHandle, &originalMode);
+#else
+        tcgetattr(STDIN_FILENO, &originalTermios);
+#endif
+    }
+
+    ~TerminalSettings() {
+        restore();
+    }
+
+    void setRawMode() {
+        if (isSet) return;
+        
+#ifdef _WIN32
+        DWORD newMode = originalMode;
+        newMode &= ~(ENABLE_ECHO_INPUT | ENABLE_LINE_INPUT);
+        SetConsoleMode(stdinHandle, newMode);
+#else
+        struct termios newTermios = originalTermios;
+        newTermios.c_lflag &= ~(ICANON | ECHO);
+        newTermios.c_cc[VMIN] = 1;
+        newTermios.c_cc[VTIME] = 0;
+        tcsetattr(STDIN_FILENO, TCSANOW, &newTermios);
+#endif
+        isSet = true;
+    }
+
+    void restore() {
+        if (!isSet) return;
+        
+#ifdef _WIN32
+        SetConsoleMode(stdinHandle, originalMode);
+#else
+        tcsetattr(STDIN_FILENO, TCSANOW, &originalTermios);
+#endif
+        isSet = false;
+    }
+};
+
+// 跨平台字符读取函数
+bool readCharImmediate(char& ch) {
+#ifdef _WIN32
+    if (_kbhit()) {
+        ch = _getch();
+        return true;
+    }
+    return false;
+#else
+    struct termios oldt, newt;
+    int ch_read;
+    
+    tcgetattr(STDIN_FILENO, &oldt);
+    newt = oldt;
+    newt.c_lflag &= ~(ICANON | ECHO);
+    newt.c_cc[VMIN] = 0;  // 非阻塞模式
+    newt.c_cc[VTIME] = 0;
+    tcsetattr(STDIN_FILENO, TCSANOW, &newt);
+    
+    ch_read = getchar();
+    
+    tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+    
+    if (ch_read != EOF) {
+        ch = static_cast<char>(ch_read);
+        return true;
+    }
+    return false;
+#endif
+}
+
 // 信号处理函数
 void signalHandler(int signal) {
     std::cout << "\n接收到信号 " << signal << ", 正在优雅关闭服务器..." << std::endl;
@@ -89,14 +184,59 @@ CommandLineArgs parseCommandLine(int argc, char* argv[]) {
 // 控制台命令处理线程
 void consoleCommandThread(CommandSystem& commandSystem) {
     std::string input;
+    TerminalSettings terminal;
+    
     while (!g_shutdownRequested) {
         g_commandInputInProgress = true;
+        g_currentInputLine.clear();
         
         // 使用更明显的提示符
         std::cout << "\033[1;32m命令>\033[0m ";
-        std::getline(std::cin, input);
+        std::cout.flush();
+        
+        // 设置终端为原始模式
+        terminal.setRawMode();
+        
+        char ch;
+        input.clear();
+        bool inputComplete = false;
+        
+        while (!g_shutdownRequested && !inputComplete) {
+            // 短暂睡眠以避免高CPU占用
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            
+            if (readCharImmediate(ch)) {
+                if (ch == '\n' || ch == '\r') {
+                    // 回车键，结束输入
+                    std::cout << std::endl;
+                    inputComplete = true;
+                } else if (ch == 127 || ch == 8) { // Backspace (Linux/Windows)
+                    if (!input.empty()) {
+                        input.pop_back();
+                        g_currentInputLine = input;
+                        // 退格处理：光标左移，删除字符，再左移
+                        std::cout << "\b \b";
+                        std::cout.flush();
+                    }
+                } else if (ch == 3) { // Ctrl+C
+                    std::cout << "^C" << std::endl;
+                    g_shutdownRequested = true;
+                    inputComplete = true;
+                } else if (ch >= 32 && ch <= 126) { // 可打印字符
+                    std::cout << ch;
+                    input += ch;
+                    g_currentInputLine = input;
+                    std::cout.flush();
+                }
+                // 忽略其他控制字符
+            }
+        }
+        
+        // 恢复终端设置
+        terminal.restore();
         
         g_commandInputInProgress = false;
+        g_currentInputLine.clear();
         
         if (input.empty()) continue;
         
@@ -109,15 +249,41 @@ void consoleCommandThread(CommandSystem& commandSystem) {
         CommandResult result = commandSystem.ExecuteCommand(input, "console");
         std::cout << (result.success ? "\033[1;32m[成功]\033[0m " : "\033[1;31m[失败]\033[0m ") << result.message << std::endl;
     }
+    
+    // 确保终端设置被恢复
+    terminal.restore();
+}
+
+// 跨平台清理函数
+void cleanupResources() {
+    // 这里可以添加其他需要清理的资源
+    std::cout << "资源清理完成" << std::endl;
+}
+
+// 跨平台设置控制台标题
+void setConsoleTitle(const std::string& title) {
+#ifdef _WIN32
+    SetConsoleTitleA(title.c_str());
+#else
+    // 对于Linux/macOS，使用ANSI转义序列设置终端标题
+    std::cout << "\033]0;" << title << "\007";
+    std::cout.flush();
+#endif
 }
 
 int main(int argc, char* argv[]) {
+    // 设置控制台标题
+    setConsoleTitle("3D迷宫游戏服务器");
+    
     // 解析命令行参数
     CommandLineArgs args = parseCommandLine(argc, argv);
     
     // 设置信号处理
     std::signal(SIGINT, signalHandler);
     std::signal(SIGTERM, signalHandler);
+    
+    // 注册清理函数
+    std::atexit(cleanupResources);
     
     std::cout << "=== 3D迷宫游戏服务器启动中 ===" << std::endl;
     std::cout << "端口: " << args.port << std::endl;
@@ -132,29 +298,21 @@ int main(int argc, char* argv[]) {
             std::cerr << "错误: 无法初始化日志系统" << std::endl;
             return 1;
         }
-        std::cout << "设置日志级别..." << std::endl;
         logger.setLogLevel(args.logLevel);
-        std::cout << "设置控制台输出..." << std::endl;
         logger.setConsoleOutput(args.enableConsoleLog);
-        std::cout << "设置文件输出..." << std::endl;
         logger.setFileOutput(args.enableFileLog);
         
-        std::cout << "记录初始化完成消息..." << std::endl;
         logger.info(LogCategory::SYSTEM, "日志系统初始化完成");
-        std::cout << "日志系统初始化完成" << std::endl;
         
         // 2. 初始化数据管理器
-        std::cout << "初始化数据管理器..." << std::endl;
         std::unique_ptr<DataManager> dataManager = std::make_unique<DataManager>();
         if (!dataManager->Initialize(args.dataPath)) {
             std::cerr << "数据管理器初始化失败" << std::endl;
             return 1;
         }
-        std::cout << "数据管理器初始化完成" << std::endl;
         logger.info(LogCategory::DATABASE, "数据管理器初始化完成");
         
         // 3. 生成或加载迷宫
-        std::cout << "初始化迷宫生成器..." << std::endl;
         std::unique_ptr<MazeGenerator> mazeGenerator = std::make_unique<MazeGenerator>(50, 50, 7);
         
         std::vector<std::vector<std::vector<bool>>> mazeLayout;
@@ -162,10 +320,8 @@ int main(int argc, char* argv[]) {
         std::tuple<int, int, int> startPos, endPos;
         
         // 尝试加载现有迷宫数据
-        std::cout << "加载迷宫数据..." << std::endl;
         if (!dataManager->LoadMazeData(mazeLayout, coinPositions, startPos, endPos)) {
             logger.info(LogCategory::GAME, "未找到迷宫数据，生成新迷宫...");
-            std::cout << "生成新迷宫..." << std::endl;
             mazeGenerator->generateMaze();
             
             // 转换迷宫数据格式
@@ -201,33 +357,26 @@ int main(int argc, char* argv[]) {
         }
         
         // 4. 初始化游戏逻辑
-        std::cout << "初始化游戏逻辑..." << std::endl;
         std::unique_ptr<GameLogic> gameLogic = std::make_unique<GameLogic>();
         if (!gameLogic->Initialize(mazeLayout, coinPositions, startPos, endPos)) {
             logger.error(LogCategory::GAME, "游戏逻辑初始化失败");
             return 1;
         }
-        std::cout << "游戏逻辑初始化完成" << std::endl;
         logger.info(LogCategory::GAME, "游戏逻辑初始化完成");
         
         // 5. 初始化玩家管理器
-        std::cout << "初始化玩家管理器..." << std::endl;
         std::unique_ptr<PlayerManager> playerManager = std::make_unique<PlayerManager>();
         if (!playerManager->Initialize(args.dataPath)) {
             logger.error(LogCategory::PLAYER, "玩家管理器初始化失败");
             return 1;
         }
-        std::cout << "玩家管理器初始化完成" << std::endl;
         logger.info(LogCategory::PLAYER, "玩家管理器初始化完成");
         
         // 6. 初始化命令系统
-        std::cout << "初始化命令系统..." << std::endl;
         std::unique_ptr<CommandSystem> commandSystem = std::make_unique<CommandSystem>(*gameLogic, *playerManager);
-        std::cout << "命令系统初始化完成" << std::endl;
         logger.info(LogCategory::COMMAND, "命令系统初始化完成");
         
         // 7. 初始化网络管理器（使用端口+1，避免与Web服务器冲突）
-        std::cout << "初始化网络管理器..." << std::endl;
         NetworkManager& networkManager = NetworkManager::getInstance();
         int networkPort = args.port + 1; // WebSocket使用下一个端口
         if (!networkManager.initialize(networkPort)) {
@@ -241,11 +390,9 @@ int main(int argc, char* argv[]) {
             logger.debug(LogCategory::NETWORK, "收到来自客户端 " + std::to_string(clientId) + " 的消息: " + message);
         });
         
-        std::cout << "网络管理器初始化完成" << std::endl;
         logger.info(LogCategory::NETWORK, "网络管理器初始化完成，端口: " + std::to_string(networkPort));
         
         // 8. 初始化Web服务器
-        std::cout << "初始化Web服务器..." << std::endl;
         WebServer& webServer = WebServer::getInstance();
         if (!webServer.initialize(args.webRoot, args.port)) {
             logger.error(LogCategory::WEB, "Web服务器初始化失败");
@@ -279,17 +426,14 @@ int main(int argc, char* argv[]) {
             return response;
         });
         
-        std::cout << "Web服务器初始化完成" << std::endl;
         logger.info(LogCategory::WEB, "Web服务器初始化完成");
         
         // 启动服务器
-        std::cout << "启动网络服务器..." << std::endl;
         if (!networkManager.startServer()) {
             logger.error(LogCategory::NETWORK, "无法启动网络服务器");
             return 1;
         }
         
-        std::cout << "启动Web服务器..." << std::endl;
         if (!webServer.startServer()) {
             logger.error(LogCategory::WEB, "无法启动Web服务器");
             return 1;
@@ -327,7 +471,6 @@ int main(int argc, char* argv[]) {
         }
         
         // 优雅关闭
-        std::cout << "\n正在关闭服务器..." << std::endl;
         logger.logSystemEvent("服务器关闭", "开始优雅关闭");
         
         // 先停止服务器

@@ -62,10 +62,7 @@ bool Logger::initialize(const std::string& logDirectory) {
     std::string categoryStr = "SYS";
     
     std::stringstream logMessage;
-    logMessage << "[" << timestamp << "] "
-               << "[" << levelStr << "] "
-               << "[" << categoryStr << "] "
-               << message;
+    logMessage << "[" << timestamp << "] " << "[" << levelStr << "] " << "[" << categoryStr << "] " << message;
     
     std::string fullMessage = logMessage.str();
     
@@ -119,26 +116,21 @@ void Logger::log(LogLevel level, LogCategory category, const std::string& messag
     std::string categoryStr = getCategoryString(category);
     
     std::stringstream logMessage;
-    logMessage << "[" << timestamp << "] "
-               << "[" << levelStr << "] "
-               << "[" << categoryStr << "] "
-               << message;
+    logMessage << "[" << timestamp << "] " << "[" << levelStr << "] " << "[" << categoryStr << "] " << message;
     
     std::string fullMessage = logMessage.str();
     
     // 输出到控制台
     if (consoleOutput_) {
-        // 如果有命令正在输入，先清除命令行再输出日志，然后重新显示命令提示符
+        // 如果有命令正在输入，先清除当前行再输出日志，然后重新显示命令提示符和输入内容
         if (g_commandInputInProgress) {
-            // 保存当前光标位置
-            std::cout << "\033[s";
             // 移动到行首并清除当前行
             std::cout << "\r\033[K";
             // 输出日志
             outputToConsole(level, fullMessage);
-            // 恢复光标位置
-            std::cout << "\033[u";
-            // 强制刷新输出缓冲区
+            // 重新显示命令提示符和当前输入的内容
+            // writeToFile("测试项:g_currentInputLine=" + g_currentInputLine);
+            std::cout << "\033[1;32m命令>\033[0m " << g_currentInputLine;
             std::cout.flush();
         } else {
             // 直接输出日志
