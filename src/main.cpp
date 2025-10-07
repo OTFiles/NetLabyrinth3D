@@ -160,29 +160,21 @@ int main(int argc, char* argv[]) {
             std::cerr << "错误: 无法初始化日志系统" << std::endl;
             return 1;
         }
-        std::cout << "设置日志级别..." << std::endl;
         logger.setLogLevel(args.logLevel);
-        std::cout << "设置控制台输出..." << std::endl;
         logger.setConsoleOutput(args.enableConsoleLog);
-        std::cout << "设置文件输出..." << std::endl;
         logger.setFileOutput(args.enableFileLog);
         
-        std::cout << "记录初始化完成消息..." << std::endl;
         logger.info(LogCategory::SYSTEM, "日志系统初始化完成");
-        std::cout << "日志系统初始化完成" << std::endl;
         
         // 2. 初始化数据管理器
-        std::cout << "初始化数据管理器..." << std::endl;
         std::unique_ptr<DataManager> dataManager = std::make_unique<DataManager>();
         if (!dataManager->Initialize(args.dataPath)) {
             std::cerr << "数据管理器初始化失败" << std::endl;
             return 1;
         }
-        std::cout << "数据管理器初始化完成" << std::endl;
         logger.info(LogCategory::DATABASE, "数据管理器初始化完成");
         
         // 3. 生成或加载迷宫
-        std::cout << "初始化迷宫生成器..." << std::endl;
         std::unique_ptr<MazeGenerator> mazeGenerator = std::make_unique<MazeGenerator>(50, 50, 7);
         
         std::vector<std::vector<std::vector<bool>>> mazeLayout;
@@ -190,10 +182,8 @@ int main(int argc, char* argv[]) {
         std::tuple<int, int, int> startPos, endPos;
         
         // 尝试加载现有迷宫数据
-        std::cout << "加载迷宫数据..." << std::endl;
         if (!dataManager->LoadMazeData(mazeLayout, coinPositions, startPos, endPos)) {
             logger.info(LogCategory::GAME, "未找到迷宫数据，生成新迷宫...");
-            std::cout << "生成新迷宫..." << std::endl;
             mazeGenerator->generateMaze();
             
             // 转换迷宫数据格式
@@ -229,33 +219,26 @@ int main(int argc, char* argv[]) {
         }
         
         // 4. 初始化游戏逻辑
-        std::cout << "初始化游戏逻辑..." << std::endl;
         std::unique_ptr<GameLogic> gameLogic = std::make_unique<GameLogic>();
         if (!gameLogic->Initialize(mazeLayout, coinPositions, startPos, endPos)) {
             logger.error(LogCategory::GAME, "游戏逻辑初始化失败");
             return 1;
         }
-        std::cout << "游戏逻辑初始化完成" << std::endl;
         logger.info(LogCategory::GAME, "游戏逻辑初始化完成");
         
         // 5. 初始化玩家管理器
-        std::cout << "初始化玩家管理器..." << std::endl;
         std::unique_ptr<PlayerManager> playerManager = std::make_unique<PlayerManager>();
         if (!playerManager->Initialize(args.dataPath)) {
             logger.error(LogCategory::PLAYER, "玩家管理器初始化失败");
             return 1;
         }
-        std::cout << "玩家管理器初始化完成" << std::endl;
         logger.info(LogCategory::PLAYER, "玩家管理器初始化完成");
         
         // 6. 初始化命令系统
-        std::cout << "初始化命令系统..." << std::endl;
         std::unique_ptr<CommandSystem> commandSystem = std::make_unique<CommandSystem>(*gameLogic, *playerManager);
-        std::cout << "命令系统初始化完成" << std::endl;
         logger.info(LogCategory::COMMAND, "命令系统初始化完成");
         
         // 7. 初始化网络管理器（使用端口+1，避免与Web服务器冲突）
-        std::cout << "初始化网络管理器..." << std::endl;
         NetworkManager& networkManager = NetworkManager::getInstance();
         int networkPort = args.port + 1; // WebSocket使用下一个端口
         if (!networkManager.initialize(networkPort)) {
@@ -269,11 +252,9 @@ int main(int argc, char* argv[]) {
             logger.debug(LogCategory::NETWORK, "收到来自客户端 " + std::to_string(clientId) + " 的消息: " + message);
         });
         
-        std::cout << "网络管理器初始化完成" << std::endl;
         logger.info(LogCategory::NETWORK, "网络管理器初始化完成，端口: " + std::to_string(networkPort));
         
         // 8. 初始化Web服务器
-        std::cout << "初始化Web服务器..." << std::endl;
         WebServer& webServer = WebServer::getInstance();
         if (!webServer.initialize(args.webRoot, args.port)) {
             logger.error(LogCategory::WEB, "Web服务器初始化失败");
@@ -307,17 +288,14 @@ int main(int argc, char* argv[]) {
             return response;
         });
         
-        std::cout << "Web服务器初始化完成" << std::endl;
         logger.info(LogCategory::WEB, "Web服务器初始化完成");
         
         // 启动服务器
-        std::cout << "启动网络服务器..." << std::endl;
         if (!networkManager.startServer()) {
             logger.error(LogCategory::NETWORK, "无法启动网络服务器");
             return 1;
         }
         
-        std::cout << "启动Web服务器..." << std::endl;
         if (!webServer.startServer()) {
             logger.error(LogCategory::WEB, "无法启动Web服务器");
             return 1;
@@ -355,7 +333,6 @@ int main(int argc, char* argv[]) {
         }
         
         // 优雅关闭
-        std::cout << "\n正在关闭服务器..." << std::endl;
         logger.logSystemEvent("服务器关闭", "开始优雅关闭");
         
         // 先停止服务器

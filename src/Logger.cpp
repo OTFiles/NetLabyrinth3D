@@ -62,10 +62,7 @@ bool Logger::initialize(const std::string& logDirectory) {
     std::string categoryStr = "SYS";
     
     std::stringstream logMessage;
-    logMessage << "[" << timestamp << "] "
-               << "[" << levelStr << "] "
-               << "[" << categoryStr << "] "
-               << message;
+    logMessage << "[" << timestamp << "] " << "[" << levelStr << "] " << "[" << categoryStr << "] " << message;
     
     std::string fullMessage = logMessage.str();
     
@@ -119,10 +116,7 @@ void Logger::log(LogLevel level, LogCategory category, const std::string& messag
     std::string categoryStr = getCategoryString(category);
     
     std::stringstream logMessage;
-    logMessage << "[" << timestamp << "] "
-               << "[" << levelStr << "] "
-               << "[" << categoryStr << "] "
-               << message;
+    logMessage << "[" << timestamp << "] " << "[" << levelStr << "] " << "[" << categoryStr << "] " << message;
     
     std::string fullMessage = logMessage.str();
     
@@ -135,6 +129,7 @@ void Logger::log(LogLevel level, LogCategory category, const std::string& messag
             // 输出日志
             outputToConsole(level, fullMessage);
             // 重新显示命令提示符和当前输入的内容
+            // writeToFile("测试项:g_currentInputLine=" + g_currentInputLine);
             std::cout << "\033[1;32m命令>\033[0m " << g_currentInputLine;
             std::cout.flush();
         } else {
