@@ -23,6 +23,101 @@ extern std::atomic<bool> g_shutdownRequested;
 extern std::atomic<bool> g_commandInputInProgress;
 extern std::string g_currentInputLine;
 
+// 平台相关的终端设置
+#ifdef _WIN32
+#include <conio.h>
+#include <windows.h>
+#else
+#include <termios.h>
+#include <unistd.h>
+#include <sys/ioctl.h>
+#endif
+
+// 跨平台终端设置类
+class TerminalSettings {
+private:
+#ifdef _WIN32
+    DWORD originalMode;
+    HANDLE stdinHandle;
+#else
+    struct termios originalTermios;
+#endif
+    bool isSet;
+
+public:
+    TerminalSettings() : isSet(false) {
+#ifdef _WIN32
+        stdinHandle = GetStdHandle(STD_INPUT_HANDLE);
+        GetConsoleMode(stdinHandle, &originalMode);
+#else
+        tcgetattr(STDIN_FILENO, &originalTermios);
+#endif
+    }
+
+    ~TerminalSettings() {
+        restore();
+    }
+
+    void setRawMode() {
+        if (isSet) return;
+        
+#ifdef _WIN32
+        DWORD newMode = originalMode;
+        newMode &= ~(ENABLE_ECHO_INPUT | ENABLE_LINE_INPUT);
+        SetConsoleMode(stdinHandle, newMode);
+#else
+        struct termios newTermios = originalTermios;
+        newTermios.c_lflag &= ~(ICANON | ECHO);
+        newTermios.c_cc[VMIN] = 1;
+        newTermios.c_cc[VTIME] = 0;
+        tcsetattr(STDIN_FILENO, TCSANOW, &newTermios);
+#endif
+        isSet = true;
+    }
+
+    void restore() {
+        if (!isSet) return;
+        
+#ifdef _WIN32
+        SetConsoleMode(stdinHandle, originalMode);
+#else
+        tcsetattr(STDIN_FILENO, TCSANOW, &originalTermios);
+#endif
+        isSet = false;
+    }
+};
+
+// 跨平台字符读取函数
+bool readCharImmediate(char& ch) {
+#ifdef _WIN32
+    if (_kbhit()) {
+        ch = _getch();
+        return true;
+    }
+    return false;
+#else
+    struct termios oldt, newt;
+    int ch_read;
+    
+    tcgetattr(STDIN_FILENO, &oldt);
+    newt = oldt;
+    newt.c_lflag &= ~(ICANON | ECHO);
+    newt.c_cc[VMIN] = 0;  // 非阻塞模式
+    newt.c_cc[VTIME] = 0;
+    tcsetattr(STDIN_FILENO, TCSANOW, &newt);
+    
+    ch_read = getchar();
+    
+    tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+    
+    if (ch_read != EOF) {
+        ch = static_cast<char>(ch_read);
+        return true;
+    }
+    return false;
+#endif
+}
+
 // 信号处理函数
 void signalHandler(int signal) {
     std::cout << "\n接收到信号 " << signal << ", 正在优雅关闭服务器..." << std::endl;
@@ -89,6 +184,8 @@ CommandLineArgs parseCommandLine(int argc, char* argv[]) {
 // 控制台命令处理线程
 void consoleCommandThread(CommandSystem& commandSystem) {
     std::string input;
+    TerminalSettings terminal;
+    
     while (!g_shutdownRequested) {
         g_commandInputInProgress = true;
         g_currentInputLine.clear();
@@ -97,31 +194,46 @@ void consoleCommandThread(CommandSystem& commandSystem) {
         std::cout << "\033[1;32m命令>\033[0m ";
         std::cout.flush();
         
-        // 逐字符读取输入，以便实时更新g_currentInputLine
+        // 设置终端为原始模式
+        terminal.setRawMode();
+        
         char ch;
         input.clear();
-        while (!g_shutdownRequested) {
-            ch = std::cin.get();
+        bool inputComplete = false;
+        
+        while (!g_shutdownRequested && !inputComplete) {
+            // 短暂睡眠以避免高CPU占用
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
             
-            if (ch == '\n' || ch == '\r') {
-                // 回车键，结束输入
-                std::cout << std::endl;
-                break;
-            } else if (ch == 127 || ch == 8) { // Backspace
-                if (!input.empty()) {
-                    input.pop_back();
+            if (readCharImmediate(ch)) {
+                if (ch == '\n' || ch == '\r') {
+                    // 回车键，结束输入
+                    std::cout << std::endl;
+                    inputComplete = true;
+                } else if (ch == 127 || ch == 8) { // Backspace (Linux/Windows)
+                    if (!input.empty()) {
+                        input.pop_back();
+                        g_currentInputLine = input;
+                        // 退格处理：光标左移，删除字符，再左移
+                        std::cout << "\b \b";
+                        std::cout.flush();
+                    }
+                } else if (ch == 3) { // Ctrl+C
+                    std::cout << "^C" << std::endl;
+                    g_shutdownRequested = true;
+                    inputComplete = true;
+                } else if (ch >= 32 && ch <= 126) { // 可打印字符
+                    std::cout << ch;
+                    input += ch;
                     g_currentInputLine = input;
-                    // 重新显示当前行
-                    std::cout << "\r\033[K\033[1;32m命令>\033[0m " << g_currentInputLine;
                     std::cout.flush();
                 }
-            } else if (ch >= 32 && ch <= 126) { // 可打印字符
-                input += ch;
-                g_currentInputLine = input;
-                std::cout << ch;
-                std::cout.flush();
+                // 忽略其他控制字符
             }
         }
+        
+        // 恢复终端设置
+        terminal.restore();
         
         g_commandInputInProgress = false;
         g_currentInputLine.clear();
@@ -137,15 +249,41 @@ void consoleCommandThread(CommandSystem& commandSystem) {
         CommandResult result = commandSystem.ExecuteCommand(input, "console");
         std::cout << (result.success ? "\033[1;32m[成功]\033[0m " : "\033[1;31m[失败]\033[0m ") << result.message << std::endl;
     }
+    
+    // 确保终端设置被恢复
+    terminal.restore();
+}
+
+// 跨平台清理函数
+void cleanupResources() {
+    // 这里可以添加其他需要清理的资源
+    std::cout << "资源清理完成" << std::endl;
+}
+
+// 跨平台设置控制台标题
+void setConsoleTitle(const std::string& title) {
+#ifdef _WIN32
+    SetConsoleTitleA(title.c_str());
+#else
+    // 对于Linux/macOS，使用ANSI转义序列设置终端标题
+    std::cout << "\033]0;" << title << "\007";
+    std::cout.flush();
+#endif
 }
 
 int main(int argc, char* argv[]) {
+    // 设置控制台标题
+    setConsoleTitle("3D迷宫游戏服务器");
+    
     // 解析命令行参数
     CommandLineArgs args = parseCommandLine(argc, argv);
     
     // 设置信号处理
     std::signal(SIGINT, signalHandler);
     std::signal(SIGTERM, signalHandler);
+    
+    // 注册清理函数
+    std::atexit(cleanupResources);
     
     std::cout << "=== 3D迷宫游戏服务器启动中 ===" << std::endl;
     std::cout << "端口: " << args.port << std::endl;
