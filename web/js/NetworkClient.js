@@ -11,11 +11,11 @@ class NetworkClient {
         this.connectionState = 'disconnected'; // disconnected, connecting, connected, error
         this.connectionCheckInterval = null;
     }
-    
+
     init(game) {
         this.game = game;
     }
-    
+
     async connect(serverAddress, playerName) {
         if (this.connectionState === 'connecting') {
             throw new Error('正在连接中，请稍候...');
@@ -45,7 +45,7 @@ class NetworkClient {
             throw error;
         }
     }
-    
+
     async fetchServerConfig(serverAddress) {
         this.game.uiManager.updateConnectionModal('正在获取服务器配置...', 30);
         
@@ -80,7 +80,7 @@ class NetworkClient {
             this.game.uiManager.updateConnectionModal('使用默认配置', 60);
         }
     }
-    
+
     async establishWebSocketConnection(serverAddress, playerName) {
         this.game.uiManager.updateConnectionModal('正在建立WebSocket连接...', 80);
         
@@ -91,7 +91,6 @@ class NetworkClient {
                 
                 this.socket = new WebSocket(wsUrl);
                 
-                // 设置连接超时
                 const connectionTimeout = setTimeout(() => {
                     if (this.socket.readyState !== WebSocket.OPEN) {
                         this.socket.close();
@@ -103,14 +102,8 @@ class NetworkClient {
                     clearTimeout(connectionTimeout);
                     console.log('WebSocket connection established');
                     
-                    // 发送玩家加入消息
-                    this.send({
-                        type: 'player_join',
-                        playerName: playerName,
-                        clientVersion: '1.0.0',
-                        timestamp: Date.now()
-                    });
-                    
+                    // 发送认证消息（新的格式）
+                    this.sendAuth(playerName);
                     resolve();
                 };
                 
@@ -137,7 +130,7 @@ class NetworkClient {
             }
         });
     }
-    
+
     buildHttpUrl(serverAddress, path = '') {
         if (serverAddress.includes('://')) {
             const url = new URL(serverAddress);
@@ -148,12 +141,12 @@ class NetworkClient {
             return `http://${serverAddress}${path}`;
         }
     }
-    
+
     buildWebSocketUrl(serverAddress) {
         const [host] = serverAddress.split(':');
         return `ws://${host}:${this.wsPort}/ws`;
     }
-    
+
     async fetchWithTimeout(url, options = {}) {
         const { timeout = 10000, ...fetchOptions } = options;
         
@@ -175,7 +168,7 @@ class NetworkClient {
             throw error;
         }
     }
-    
+
     handleDisconnection(event) {
         this.connectionState = 'disconnected';
         this.stopConnectionMonitoring();
@@ -205,7 +198,7 @@ class NetworkClient {
             this.game.showLoginScreen();
         }
     }
-    
+
     startConnectionMonitoring() {
         this.stopConnectionMonitoring();
         
@@ -219,14 +212,14 @@ class NetworkClient {
             }
         }, 30000); // 每30秒发送一次ping
     }
-    
+
     stopConnectionMonitoring() {
         if (this.connectionCheckInterval) {
             clearInterval(this.connectionCheckInterval);
             this.connectionCheckInterval = null;
         }
     }
-    
+
     send(data) {
         if (this.socket && this.socket.readyState === WebSocket.OPEN) {
             try {
@@ -242,45 +235,97 @@ class NetworkClient {
             return false;
         }
     }
-    
+
     // 发送玩家移动消息
     sendPlayerMove(position, rotation) {
-        this.send({
-            type: 'player_move',
+        return this.sendMessage('move', {
             position: position,
-            rotation: rotation,
-            timestamp: Date.now()
+            rotation: rotation
         });
     }
-    
+
+    // 发送消息的方法，统一消息格式
+    sendMessage(type, data = {}) {
+        if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+            const message = {
+                type: type,
+                timestamp: Date.now(),
+                data: data
+            };
+            
+            try {
+                this.socket.send(JSON.stringify(message));
+                return true;
+            } catch (error) {
+                console.error('发送消息失败:', error);
+                return false;
+            }
+        }
+        return false;
+    }
+
     // 发送聊天消息
     sendChatMessage(message) {
-        this.send({
-            type: 'chat_message',
-            message: message,
-            timestamp: Date.now()
+        return this.sendMessage('chat_message', {
+            message: message
         });
     }
-    
+
     // 发送购买道具消息
     buyItem(itemType) {
-        this.send({
-            type: 'buy_item',
-            itemType: itemType,
-            timestamp: Date.now()
+        return this.sendMessage('purchase_item', {
+            itemType: this.mapItemType(itemType)
         });
     }
-    
+
     // 发送使用道具消息
     useItem(itemType, target = null) {
-        this.send({
-            type: 'use_item',
-            itemType: itemType,
-            target: target,
-            timestamp: Date.now()
+        const data = {
+            itemType: this.mapItemType(itemType)
+        };
+        
+        if (target && target.playerId) {
+            data.targetPlayerId = target.playerId;
+        }
+        if (target && target.position) {
+            data.targetPosition = target.position;
+        }
+        
+        return this.sendMessage('use_item', data);
+    }
+
+    // 道具类型映射
+    mapItemType(frontendType) {
+        const typeMap = {
+            'speed_potion': 'speed_potion',
+            'compass': 'compass',
+            'hammer': 'hammer',
+            'sword': 'kill_sword', // 注意：后端使用kill_sword
+            'slow_trap': 'slow_trap',
+            'swap_item': 'swap_item'
+        };
+        return typeMap[frontendType] || frontendType;
+    }
+
+    // 添加认证消息发送
+    sendAuth(playerName) {
+        const playerId = localStorage.getItem('playerId') || this.generatePlayerId();
+        const token = localStorage.getItem('playerToken') || '';
+        
+        return this.sendMessage('auth', {
+            playerId: playerId,
+            playerName: playerName,
+            token: token
         });
     }
-    
+
+    // 生成玩家ID
+    generatePlayerId() {
+        const playerId = 'player_' + Math.random().toString(36).substr(2, 9);
+        localStorage.setItem('playerId', playerId);
+        return playerId;
+    }
+
     // 获取服务器状态
     async getServerStatus(serverAddress) {
         try {
@@ -306,7 +351,7 @@ class NetworkClient {
             };
         }
     }
-    
+
     // 断开连接
     disconnect() {
         this.connectionState = 'disconnected';
@@ -319,17 +364,32 @@ class NetworkClient {
         
         this.reconnectAttempts = 0;
     }
-    
+
     // 获取连接状态
     getConnectionState() {
         return this.connectionState;
     }
-    
+
     // 强制重连
     async forceReconnect(serverAddress, playerName) {
         this.reconnectAttempts = 0;
         this.disconnect();
         return await this.connect(serverAddress, playerName);
+    }
+    
+    startHeartbeat() {
+        this.heartbeatInterval = setInterval(() => {
+            if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+                this.sendMessage('ping');
+            }
+        }, 30000); // 每30秒发送一次ping
+    }
+    
+    stopHeartbeat() {
+        if (this.heartbeatInterval) {
+            clearInterval(this.heartbeatInterval);
+            this.heartbeatInterval = null;
+        }
     }
 }
 

@@ -339,14 +339,29 @@ class UIManager {
 
     getItemName(itemType) {
         const itemNames = {
-            speed_potion: '加速药水',
-            compass: '指南针',
-            hammer: '锤子',
-            sword: '秒人剑',
-            slow_trap: '减速带',
-            swap_item: '大局逆转'
+            'speed_potion': '加速药水',
+            'compass': '指南针', 
+            'hammer': '锤子',
+            'sword': '秒人剑',
+            'kill_sword': '秒人剑', // 兼容后端名称
+            'slow_trap': '减速带',
+            'swap_item': '大局逆转'
         };
         return itemNames[itemType] || '未知道具';
+    }
+    
+    // 道具价格
+    getItemPrice(itemType) {
+        const itemPrices = {
+            'speed_potion': 20,
+            'compass': 25,
+            'hammer': 50,
+            'sword': 50,
+            'kill_sword': 50, // 兼容后端名称
+            'slow_trap': 30,
+            'swap_item': 60
+        };
+        return itemPrices[itemType] || 0;
     }
 
     addChatMessage(sender, message) {
