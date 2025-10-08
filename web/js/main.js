@@ -193,40 +193,108 @@ class MazeGame {
     
     // 处理服务器消息
     handleServerMessage(message) {
-        const data = JSON.parse(message);
-        
-        switch (data.type) {
-            case 'player_joined':
-                this.handlePlayerJoined(data);
+        try {
+            const data = JSON.parse(message);
+            
+            // 统一的消息格式处理
+            const messageType = data.type;
+            const messageData = data.data || data; // 兼容两种格式
+            
+            switch (messageType) {
+                case 'player_join':
+                    this.handlePlayerJoined(messageData);
+                    break;
+                case 'player_leave':
+                case 'player_left': // 兼容两种消息类型
+                    this.handlePlayerLeft(messageData);
+                    break;
+                case 'player_move':
+                case 'player_moved': // 兼容两种消息类型
+                    this.handlePlayerMoved(messageData);
+                    break;
+                case 'player_data':
+                    this.handlePlayerData(messageData);
+                    break;
+                case 'maze_data':
+                    this.handleMazeData(messageData);
+                    break;
+                case 'chat_message':
+                    this.handleChatMessage(messageData);
+                    break;
+                case 'game_state':
+                    this.handleGameState(messageData);
+                    break;
+                case 'item_effect':
+                case 'item_used': // 兼容两种消息类型
+                    this.handleItemUsed(messageData);
+                    break;
+                case 'game_event':
+                    this.handleGameEvent(messageData);
+                    break;
+                case 'error':
+                    this.handleErrorMessage(messageData);
+                    break;
+                case 'pong': // 处理ping/pong心跳
+                    this.lastPongTime = Date.now();
+                    break;
+                default:
+                    console.warn('未知消息类型:', messageType, messageData);
+            }
+        } catch (error) {
+            console.error('消息处理错误:', error, message);
+        }
+    }
+    
+    // 游戏事件处理
+    handleGameEvent(data) {
+        switch (data.eventType) {
+            case 'player_reached_goal':
+                this.handlePlayerReachedGoal(data);
                 break;
-            case 'player_left':
-                this.handlePlayerLeft(data);
-                break;
-            case 'player_moved':
-                this.handlePlayerMoved(data);
-                break;
-            case 'player_data':
-                this.handlePlayerData(data);
-                break;
-            case 'maze_data':
-                this.handleMazeData(data);
-                break;
-            case 'chat_message':
-                this.handleChatMessage(data);
-                break;
-            case 'game_state':
-                this.handleGameState(data);
-                break;
-            case 'item_used':
-                this.handleItemUsed(data);
+            case 'coin_collected':
+                this.handleCoinCollected(data);
                 break;
             case 'game_over':
                 this.handleGameOver(data);
                 break;
-            case 'system_message':
-                this.handleSystemMessage(data);
-                break;
+            default:
+                console.log('游戏事件:', data);
         }
+    }
+    
+    // 处理金币收集
+    handleCoinCollected(data) {
+        if (data.playerId === this.gameState.playerId) {
+            this.gameState.coins = data.totalCoins || this.gameState.coins;
+            this.uiManager.updatePlayerInfo(this.gameState.playerName, this.gameState.coins);
+        }
+    }
+    
+    // 处理玩家到达终点
+    handlePlayerReachedGoal(data) {
+        const playerName = data.playerName || '未知玩家';
+        const isCurrentPlayer = data.playerId === this.gameState.playerId;
+        
+        if (isCurrentPlayer) {
+            this.uiManager.showMessage('恭喜！你第一个到达终点！', 'success');
+        } else {
+            this.uiManager.addChatMessage('system', `${playerName} 第一个到达终点！`);
+        }
+    }
+    
+    // 处理错误消息
+    handleErrorMessage(data) {
+        const errorMessages = {
+            'INVALID_MOVE': '无法移动到该位置',
+            'INSUFFICIENT_COINS': '金币不足',
+            'ITEM_NOT_OWNED': '未拥有该道具',
+            'PLAYER_NOT_FOUND': '玩家不存在',
+            'INVALID_TARGET': '无效的目标',
+            'GAME_NOT_RUNNING': '游戏未运行'
+        };
+        
+        const message = errorMessages[data.code] || data.message || '发生未知错误';
+        this.uiManager.showMessage(message, 'error');
     }
     
     handlePlayerJoined(data) {
@@ -257,11 +325,20 @@ class MazeGame {
         }
     }
     
+    // 修改玩家数据处理的兼容性
     handlePlayerData(data) {
-        this.gameState.playerId = data.playerId;
-        this.gameState.coins = data.coins;
-        this.gameState.inventory = data.inventory;
-        this.gameState.position = data.position;
+        // 兼容不同的数据结构
+        this.gameState.playerId = data.playerId || data.id;
+        this.gameState.coins = data.coins || data.gold || 0;
+        this.gameState.position = data.position || { x: 0, y: 0, z: 0 };
+        this.gameState.inventory = data.inventory || {
+            speed_potion: 0,
+            compass: 0,
+            hammer: 0,
+            sword: 0,
+            slow_trap: 0,
+            swap_item: 0
+        };
         
         this.uiManager.updatePlayerInfo(this.gameState.playerName, this.gameState.coins);
         this.uiManager.updateInventory(this.gameState.inventory);

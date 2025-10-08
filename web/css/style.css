@@ -740,3 +740,19 @@ body {
         padding: 6px 10px;
     }
 }
+
+.status-running { color: #4ade80; }
+.status-maintenance { color: #fbbf24; }
+.status-offline { color: #f87171; }
+.status-unknown { color: #b8b8d1; }
+
+.server-status-details {
+    font-size: 0.9rem;
+    line-height: 1.4;
+}
+
+.server-status-details strong {
+    color: #4cc9f0;
+    display: inline-block;
+    min-width: 80px;
+}

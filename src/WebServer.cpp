@@ -235,15 +235,11 @@ std::string WebServer::handleRequest(const std::string& request) {
     auto userAgentIt = headers.find("User-Agent");
     std::string userAgent = (userAgentIt != headers.end()) ? userAgentIt->second : "unknown";
     
-    Logger::getInstance().info(LogCategory::WEB, 
-        "HTTP请求 - 方法: " + method + 
-        " | 路径: " + path + 
-        " | User-Agent: " + userAgent);
+    // Logger::getInstance().info(LogCategory::WEB, "HTTP请求 - 方法: " + method + " | 路径: " + path + " | User-Agent: " + userAgent);
     
     // 只处理GET请求
     if (method != "GET") {
-        Logger::getInstance().warning(LogCategory::WEB, 
-            "不支持的HTTP方法 - 方法: " + method + " | 路径: " + path);
+        Logger::getInstance().warning(LogCategory::WEB, "不支持的HTTP方法 - 方法: " + method + " | 路径: " + path);
         return buildHttpResponse(405, "Method Not Allowed", "Only GET method is supported", "text/plain");
     }
     
@@ -262,8 +258,7 @@ std::string WebServer::handleRequest(const std::string& request) {
                 contentType = "application/json; charset=utf-8";
             }
             
-            Logger::getInstance().debug(LogCategory::WEB, 
-                "处理API路由 - 路径: " + path + " | 响应长度: " + std::to_string(customResponse.length()));
+            Logger::getInstance().debug(LogCategory::WEB, "处理API路由 - 路径: " + path + " | 响应长度: " + std::to_string(customResponse.length()));
             
             return buildHttpResponse(200, "OK", customResponse, contentType);
         }
@@ -276,8 +271,7 @@ std::string WebServer::handleRequest(const std::string& request) {
     
     // 安全检查
     if (!isSafePath(path)) {
-        Logger::getInstance().warning(LogCategory::WEB, 
-            "路径安全检查失败 - 路径: " + path);
+        Logger::getInstance().warning(LogCategory::WEB, "路径安全检查失败 - 路径: " + path);
         return buildHttpResponse(403, "Forbidden", "Access denied", "text/plain");
     }
     
@@ -305,10 +299,7 @@ std::string WebServer::handleRequest(const std::string& request) {
     // 获取MIME类型
     std::string contentType = getMimeType(fullPath);
     
-    Logger::getInstance().debug(LogCategory::WEB, 
-        "提供静态文件 - 路径: " + path + 
-        " | 类型: " + contentType + 
-        " | 大小: " + std::to_string(fileContent.length()) + " bytes");
+    Logger::getInstance().debug(LogCategory::WEB, "提供静态文件 - 路径: " + path + " | 类型: " + contentType + " | 大小: " + std::to_string(fileContent.length()) + " bytes");
     
     return buildHttpResponse(200, "OK", fileContent, contentType);
 }
