@@ -823,6 +823,90 @@
         .message-warning {
             background: linear-gradient(135deg, #fbbf24, #f59e0b);
         }
+
+        /* 调试信息面板 */
+        .debug-panel {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            width: 400px;
+            height: 300px;
+            background-color: rgba(0, 0, 0, 0.9);
+            border: 1px solid #444;
+            border-radius: 8px;
+            z-index: 1000;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            color: #00ff00;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .debug-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 12px;
+            background-color: rgba(0, 0, 0, 0.8);
+            border-bottom: 1px solid #444;
+        }
+
+        .debug-header h3 {
+            margin: 0;
+            font-size: 14px;
+            color: #fff;
+        }
+
+        .debug-header button {
+            background-color: #333;
+            color: #fff;
+            border: 1px solid #555;
+            padding: 4px 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 11px;
+            margin-left: 5px;
+        }
+
+        .debug-header button:hover {
+            background-color: #444;
+        }
+
+        .debug-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px;
+            line-height: 1.4;
+        }
+
+        .debug-log {
+            margin-bottom: 4px;
+            word-break: break-all;
+        }
+
+        .debug-log.timestamp {
+            color: #888;
+        }
+
+        .debug-log.info {
+            color: #00ff00;
+        }
+
+        .debug-log.warning {
+            color: #ffff00;
+        }
+
+        .debug-log.error {
+            color: #ff0000;
+        }
+
+        .debug-log.network {
+            color: #00ffff;
+        }
+
+        .debug-log.game {
+            color: #ff00ff;
+        }
     </style>
 </head>
 <body>
@@ -1056,6 +1140,16 @@
                 </div>
             </div>
         </div>
+
+        <!-- 调试信息面板 -->
+        <div id="debugPanel" class="debug-panel">
+            <div class="debug-header">
+                <h3>调试信息</h3>
+                <button id="toggleDebug">隐藏</button>
+                <button id="clearDebug">清空</button>
+            </div>
+            <div id="debugContent" class="debug-content"></div>
+        </div>
     </div>
 
     <!-- Three.js 库 -->
@@ -1192,6 +1286,28 @@
             serverAddressInput.addEventListener('keypress', function(event) {
                 if (event.key === 'Enter') {
                     connectButton.click();
+                }
+            });
+
+            // 调试面板事件监听
+            document.addEventListener('DOMContentLoaded', function() {
+                const toggleDebugBtn = document.getElementById('toggleDebug');
+                const clearDebugBtn = document.getElementById('clearDebug');
+                
+                if (toggleDebugBtn) {
+                    toggleDebugBtn.addEventListener('click', function() {
+                        if (window.game && typeof window.game.toggleDebugPanel === 'function') {
+                            window.game.toggleDebugPanel();
+                        }
+                    });
+                }
+                
+                if (clearDebugBtn) {
+                    clearDebugBtn.addEventListener('click', function() {
+                        if (window.game && typeof window.game.clearDebugLogs === 'function') {
+                            window.game.clearDebugLogs();
+                        }
+                    });
                 }
             });
         });

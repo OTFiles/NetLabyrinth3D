@@ -18,11 +18,14 @@ class NetworkClient {
 
     async connect(serverAddress, playerName) {
         if (this.connectionState === 'connecting') {
-            throw new Error('正在连接中，请稍候...');
+            const errorMsg = '正在连接中，请稍候...';
+            this.game.log(`网络连接错误: ${errorMsg}`, 'error');
+            throw new Error(errorMsg);
         }
         
         this.connectionState = 'connecting';
         this.game.uiManager.showConnectionModal('正在连接服务器...');
+        this.game.log(`开始连接服务器: ${serverAddress}, 玩家: ${playerName}`, 'network');
         
         try {
             // 1. 获取服务器配置
@@ -35,6 +38,7 @@ class NetworkClient {
             this.reconnectAttempts = 0;
             this.game.uiManager.hideConnectionModal();
             this.game.uiManager.showMessage('连接服务器成功！', 'success');
+            this.game.log('WebSocket连接建立成功', 'network');
             
             // 开始连接状态检查
             this.startConnectionMonitoring();
@@ -42,6 +46,7 @@ class NetworkClient {
         } catch (error) {
             this.connectionState = 'error';
             this.game.uiManager.hideConnectionModal();
+            this.game.log(`连接服务器失败: ${error.message}`, 'error');
             throw error;
         }
     }
@@ -225,13 +230,14 @@ class NetworkClient {
             try {
                 const message = JSON.stringify(data);
                 this.socket.send(message);
+                this.game.log(`发送消息: ${data.type}`, 'network');
                 return true;
             } catch (error) {
-                console.error('Failed to send message:', error);
+                this.game.log(`发送消息失败: ${error.message}`, 'error');
                 return false;
             }
         } else {
-            console.warn('WebSocket is not open. Message not sent:', data);
+            this.game.log(`WebSocket未连接，消息未发送: ${data.type}`, 'warning');
             return false;
         }
     }

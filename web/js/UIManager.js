@@ -15,12 +15,15 @@ class UIManager {
         
         this.game = game;
         this.isInitialized = true;
+        this.game.log('初始化UI管理器', 'info');
         this.setupEventListeners();
         this.setupShop();
         this.initializeUIState();
         
         // 初始检查服务器状态
         this.checkServerStatus();
+        
+        this.game.log('UI管理器初始化完成', 'info');
     }
 
     initializeUIState() {
