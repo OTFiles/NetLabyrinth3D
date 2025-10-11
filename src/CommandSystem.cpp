@@ -6,7 +6,7 @@
 
 // 默认管理员列表（可在配置中修改）
 const std::vector<std::string> CommandSystem::DEFAULT_ADMINS = {
-    "admin", "supervisor", "game_master"
+    "admin", "root"
 };
 
 CommandSystem::CommandSystem(GameLogic& gameLogic, PlayerManager& playerManager)

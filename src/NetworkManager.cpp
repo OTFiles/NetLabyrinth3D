@@ -206,12 +206,48 @@ void NetworkManager::Impl::handleNewConnection(SOCKET clientSocket, const std::s
     fcntl(clientSocket, F_SETFL, flags | O_NONBLOCK);
 #endif
 
-    // 读取握手请求
+    // 读取握手请求 - 使用循环确保读取完整请求
+    std::string request;
     std::vector<uint8_t> buffer(1024);
-    int bytesReceived = recv(clientSocket, (char*)buffer.data(), buffer.size(), 0);
+    int totalBytesReceived = 0;
+    const int maxAttempts = 10; // 最多尝试10次
+    int attempts = 0;
     
-    if (bytesReceived > 0) {
-        std::string request(buffer.begin(), buffer.begin() + bytesReceived);
+    while (attempts < maxAttempts) {
+        int bytesReceived = recv(clientSocket, (char*)buffer.data(), buffer.size(), 0);
+        
+        if (bytesReceived > 0) {
+            request.append(buffer.begin(), buffer.begin() + bytesReceived);
+            totalBytesReceived += bytesReceived;
+            
+            // 检查是否收到完整的HTTP请求（以\r\n\r\n结束）
+            if (request.find("\r\n\r\n") != std::string::npos) {
+                break; // 收到完整请求
+            }
+        } else if (bytesReceived == 0) {
+            // 连接关闭
+            closesocket(clientSocket);
+            return;
+        } else {
+            // 错误或没有数据可读
+#ifdef _WIN32
+            int error = WSAGetLastError();
+            if (error != WSAEWOULDBLOCK) {
+#else
+            if (errno != EWOULDBLOCK && errno != EAGAIN) {
+#endif
+                closesocket(clientSocket);
+                return;
+            }
+        }
+        
+        attempts++;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    
+    if (totalBytesReceived > 0 && !request.empty()) {
+        Logger::getInstance().debug(LogCategory::NETWORK, 
+            "收到握手请求 - IP: " + clientIp + " - 长度: " + std::to_string(request.length()));
         
         if (performWebSocketHandshake(clientSocket, request)) {
             int clientId = nextClientId++;
@@ -240,14 +276,42 @@ void NetworkManager::Impl::handleNewConnection(SOCKET clientSocket, const std::s
         } else {
             Logger::getInstance().warning(LogCategory::NETWORK, 
                 "WebSocket握手失败 - IP: " + clientIp);
+            
+            // 发送HTTP 400响应
+            std::string response = 
+                "HTTP/1.1 400 Bad Request\r\n"
+                "Content-Type: text/plain\r\n"
+                "Content-Length: 23\r\n"
+                "Connection: close\r\n\r\n"
+                "Invalid WebSocket request";
+            sendRawData(clientSocket, response);
+            
             closesocket(clientSocket);
         }
     } else {
+        Logger::getInstance().warning(LogCategory::NETWORK, 
+            "未收到握手请求 - IP: " + clientIp);
         closesocket(clientSocket);
     }
 }
 
 bool NetworkManager::Impl::performWebSocketHandshake(SOCKET clientSocket, const std::string& request) {
+    // 检查是否是WebSocket升级请求
+    if (request.find("GET") != 0) {
+        return false;
+    }
+    
+    // 检查Upgrade头
+    if (request.find("Upgrade: websocket") == std::string::npos) {
+        return false;
+    }
+    
+    // 检查Connection头
+    if (request.find("Connection: Upgrade") == std::string::npos && 
+        request.find("Connection: upgrade") == std::string::npos) {
+        return false;
+    }
+    
     // 查找WebSocket Key
     std::string keyHeader = "Sec-WebSocket-Key: ";
     size_t keyStart = request.find(keyHeader);
@@ -263,6 +327,22 @@ bool NetworkManager::Impl::performWebSocketHandshake(SOCKET clientSocket, const 
     
     std::string webSocketKey = request.substr(keyStart, keyEnd - keyStart);
     
+    // 检查WebSocket版本
+    std::string versionHeader = "Sec-WebSocket-Version: ";
+    size_t versionStart = request.find(versionHeader);
+    if (versionStart != std::string::npos) {
+        versionStart += versionHeader.length();
+        size_t versionEnd = request.find("\r\n", versionStart);
+        if (versionEnd != std::string::npos) {
+            std::string version = request.substr(versionStart, versionEnd - versionStart);
+            if (version != "13") {
+                Logger::getInstance().warning(LogCategory::NETWORK, 
+                    "不支持的WebSocket版本: " + version);
+                return false;
+            }
+        }
+    }
+    
     // 计算Accept Key
     std::string combined = webSocketKey + WEB_SOCKET_GUID;
     
@@ -277,7 +357,11 @@ bool NetworkManager::Impl::performWebSocketHandshake(SOCKET clientSocket, const 
         "HTTP/1.1 101 Switching Protocols\r\n"
         "Upgrade: websocket\r\n"
         "Connection: Upgrade\r\n"
-        "Sec-WebSocket-Accept: " + acceptKey + "\r\n\r\n";
+        "Sec-WebSocket-Accept: " + acceptKey + "\r\n"
+        "Sec-WebSocket-Version: 13\r\n\r\n";
+    
+    Logger::getInstance().debug(LogCategory::NETWORK, 
+        "WebSocket握手成功 - Key: " + webSocketKey + " - Accept: " + acceptKey);
     
     return sendRawData(clientSocket, response);
 }
