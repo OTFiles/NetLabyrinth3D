@@ -289,10 +289,19 @@ class MazeGame {
     // 处理服务器消息
     handleServerMessage(message) {
         try {
-            const data = JSON.parse(message);
+            let data;
             
-            // 统一的消息格式处理
-            const messageType = data.type;
+            // 首先尝试直接解析消息
+            try {
+                data = JSON.parse(message);
+            } catch (e) {
+                // 如果不是JSON，可能是简单文本消息
+                this.log(`收到非JSON消息: ${message}`, 'network');
+                return;
+            }
+            
+            // 处理不同的消息格式
+            const messageType = data.type || data.eventType;
             const messageData = data.data || data; // 兼容两种格式
 
             this.log(`收到服务器消息: ${messageType}`, 'network');
@@ -379,7 +388,7 @@ class MazeGame {
     // 处理认证成功
     handleAuthSuccess(data) {
         this.log('认证成功', 'network');
-        this.gameState.playerId = data.playerId;
+        this.gameState.playerId = data.playerId || data.id;
         this.gameState.isConnected = true;
         
         // 保存token到本地存储
@@ -388,6 +397,9 @@ class MazeGame {
         }
         
         this.uiManager.showMessage('认证成功，加入游戏中...', 'success');
+        
+        // 认证成功后切换到游戏界面
+        this.showGameScreen();
     }
     
     // 处理认证失败

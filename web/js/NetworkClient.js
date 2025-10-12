@@ -27,6 +27,14 @@ class NetworkClient {
         this.game.uiManager.showConnectionModal('正在连接服务器...');
         this.game.log(`开始连接服务器: ${serverAddress}, 玩家: ${playerName}`, 'network');
         
+        // 记录连接详细信息用于调试
+        console.log('连接详细信息:', {
+            serverAddress,
+            playerName,
+            wsPort: this.wsPort,
+            fullUrl: this.buildWebSocketUrl(serverAddress)
+        });
+        
         try {
             // 1. 获取服务器配置
             await this.fetchServerConfig(serverAddress);
@@ -94,6 +102,7 @@ class NetworkClient {
                 const wsUrl = this.buildWebSocketUrl(serverAddress);
                 console.log('Connecting to WebSocket:', wsUrl);
                 
+                // 创建简单的WebSocket连接，不添加额外选项
                 this.socket = new WebSocket(wsUrl);
                 
                 const connectionTimeout = setTimeout(() => {
@@ -124,13 +133,13 @@ class NetworkClient {
                     try {
                         const data = JSON.parse(event.data);
                         // 检查是否是认证成功消息
-                        if (data.type === 'auth_success') {
+                        if (data.type === 'auth_success' || data.status === 'success') {
                             clearTimeout(authTimeout);
                             authSuccess = true;
                             resolve();
-                        } else if (data.type === 'auth_failed') {
+                        } else if (data.type === 'auth_failed' || data.status === 'failed') {
                             clearTimeout(authTimeout);
-                            reject(new Error(data.data?.message || '认证失败'));
+                            reject(new Error(data.message || '认证失败'));
                         }
                         
                         if (this.game && typeof this.game.handleServerMessage === 'function') {
@@ -138,6 +147,10 @@ class NetworkClient {
                         }
                     } catch (error) {
                         console.error('处理消息错误:', error);
+                        // 即使解析失败，也传递给游戏处理
+                        if (this.game && typeof this.game.handleServerMessage === 'function') {
+                            this.game.handleServerMessage(event.data);
+                        }
                     }
                 };
                 
@@ -173,8 +186,25 @@ class NetworkClient {
     }
 
     buildWebSocketUrl(serverAddress) {
-        const [host] = serverAddress.split(':');
-        return `ws://${host}:${this.wsPort}/`;
+        // 处理服务器地址，提取主机名和端口
+        let host = 'localhost';
+        let port = this.wsPort;
+        
+        if (serverAddress.includes('://')) {
+            const url = new URL(serverAddress);
+            host = url.hostname;
+            port = url.port || this.wsPort;
+        } else {
+            const parts = serverAddress.split(':');
+            host = parts[0];
+            if (parts.length > 1) {
+                // 使用Web服务器端口来推断WebSocket端口
+                const webPort = parseInt(parts[1]);
+                port = webPort + 1; // 假设WebSocket端口是Web端口+1
+            }
+        }
+        
+        return `ws://${host}:${port}/`;
     }
 
     async fetchWithTimeout(url, options = {}) {
@@ -353,20 +383,17 @@ class NetworkClient {
         const playerId = localStorage.getItem('playerId') || this.generatePlayerId();
         const token = localStorage.getItem('playerToken') || '';
         
-        // 立即发送认证消息，不等待sendMessage的队列
+        // 立即发送认证消息，使用服务器期望的简单格式
         if (this.socket && this.socket.readyState === WebSocket.OPEN) {
-            const authMessage = {
+            const authMessage = JSON.stringify({
                 type: 'auth',
-                timestamp: Date.now(),
-                data: {
-                    playerId: playerId,
-                    playerName: playerName,
-                    token: token
-                }
-            };
+                playerId: playerId,
+                playerName: playerName,
+                token: token
+            });
             
             try {
-                this.socket.send(JSON.stringify(authMessage));
+                this.socket.send(authMessage);
                 this.game.log(`发送认证消息: ${playerName}`, 'network');
                 return true;
             } catch (error) {
