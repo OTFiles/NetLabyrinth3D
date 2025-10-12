@@ -206,12 +206,57 @@ void NetworkManager::Impl::handleNewConnection(SOCKET clientSocket, const std::s
     fcntl(clientSocket, F_SETFL, flags | O_NONBLOCK);
 #endif
 
-    // 读取握手请求
-    std::vector<uint8_t> buffer(1024);
-    int bytesReceived = recv(clientSocket, (char*)buffer.data(), buffer.size(), 0);
+    // 读取握手请求 - 使用更宽松的超时和缓冲区
+    std::string request;
+    std::vector<uint8_t> buffer(4096); // 更大的缓冲区
+    int totalBytesReceived = 0;
+    const int maxAttempts = 20; // 更多尝试次数
+    int attempts = 0;
+    bool gotCompleteRequest = false;
     
-    if (bytesReceived > 0) {
-        std::string request(buffer.begin(), buffer.begin() + bytesReceived);
+    while (attempts < maxAttempts && !gotCompleteRequest) {
+        int bytesReceived = recv(clientSocket, (char*)buffer.data(), buffer.size(), 0);
+        
+        if (bytesReceived > 0) {
+            request.append(buffer.begin(), buffer.begin() + bytesReceived);
+            totalBytesReceived += bytesReceived;
+            
+            // 检查是否收到完整的HTTP请求（以\r\n\r\n结束）
+            if (request.find("\r\n\r\n") != std::string::npos) {
+                gotCompleteRequest = true;
+                break; // 收到完整请求
+            }
+            
+            // 如果请求过大，可能有问题
+            if (totalBytesReceived > 8192) {
+                Logger::getInstance().warning(LogCategory::NETWORK, 
+                    "请求过大 - IP: " + clientIp + " - 长度: " + std::to_string(totalBytesReceived));
+                break;
+            }
+        } else if (bytesReceived == 0) {
+            // 连接关闭
+            closesocket(clientSocket);
+            return;
+        } else {
+            // 错误或没有数据可读
+#ifdef _WIN32
+            int error = WSAGetLastError();
+            if (error != WSAEWOULDBLOCK) {
+#else
+            if (errno != EWOULDBLOCK && errno != EAGAIN) {
+#endif
+                closesocket(clientSocket);
+                return;
+            }
+        }
+        
+        attempts++;
+        std::this_thread::sleep_for(std::chrono::milliseconds(20)); // 更长的等待时间
+    }
+
+    if (totalBytesReceived > 0 && !request.empty()) {
+        Logger::getInstance().debug(LogCategory::NETWORK, 
+            "收到握手请求 - IP: " + clientIp + " - 长度: " + std::to_string(request.length()));
         
         if (performWebSocketHandshake(clientSocket, request)) {
             int clientId = nextClientId++;
@@ -240,28 +285,92 @@ void NetworkManager::Impl::handleNewConnection(SOCKET clientSocket, const std::s
         } else {
             Logger::getInstance().warning(LogCategory::NETWORK, 
                 "WebSocket握手失败 - IP: " + clientIp);
+            
+            // 发送HTTP 400响应
+            std::string response = 
+                "HTTP/1.1 400 Bad Request\r\n"
+                "Content-Type: text/plain\r\n"
+                "Content-Length: 23\r\n"
+                "Connection: close\r\n\r\n"
+                "Invalid WebSocket request";
+            sendRawData(clientSocket, response);
+            
             closesocket(clientSocket);
         }
     } else {
+        Logger::getInstance().warning(LogCategory::NETWORK, 
+            "未收到握手请求 - IP: " + clientIp);
         closesocket(clientSocket);
     }
 }
 
 bool NetworkManager::Impl::performWebSocketHandshake(SOCKET clientSocket, const std::string& request) {
-    // 查找WebSocket Key
-    std::string keyHeader = "Sec-WebSocket-Key: ";
-    size_t keyStart = request.find(keyHeader);
-    if (keyStart == std::string::npos) {
+    // 检查是否是WebSocket升级请求
+    if (request.find("GET") != 0) {
+        Logger::getInstance().debug(LogCategory::NETWORK, "握手失败: 不是GET请求");
         return false;
+    }
+    
+    // 更宽松的头部检查 - 使用不区分大小写的查找
+    std::string requestLower = request;
+    std::transform(requestLower.begin(), requestLower.end(), requestLower.begin(), ::tolower);
+    
+    // 检查Upgrade头
+    if (requestLower.find("upgrade: websocket") == std::string::npos) {
+        Logger::getInstance().debug(LogCategory::NETWORK, "握手失败: 缺少Upgrade头");
+        return false;
+    }
+    
+    // 检查Connection头 - 更宽松的匹配
+    if (requestLower.find("connection: upgrade") == std::string::npos && 
+        requestLower.find("connection:") != std::string::npos && 
+        requestLower.find("upgrade") == std::string::npos) {
+        Logger::getInstance().debug(LogCategory::NETWORK, "握手失败: 缺少Connection: Upgrade头");
+        return false;
+    }
+    
+    // 查找WebSocket Key - 不区分大小写
+    std::string keyHeader = "sec-websocket-key: ";
+    size_t keyStart = requestLower.find(keyHeader);
+    if (keyStart == std::string::npos) {
+        // 尝试大写版本
+        keyHeader = "Sec-WebSocket-Key: ";
+        keyStart = request.find(keyHeader);
+        if (keyStart == std::string::npos) {
+            Logger::getInstance().debug(LogCategory::NETWORK, "握手失败: 缺少Sec-WebSocket-Key头");
+            return false;
+        }
     }
     
     keyStart += keyHeader.length();
-    size_t keyEnd = request.find("\r\n", keyStart);
+    size_t keyEnd = requestLower.find("\r\n", keyStart);
     if (keyEnd == std::string::npos) {
-        return false;
+        keyEnd = requestLower.find("\n", keyStart);
+        if (keyEnd == std::string::npos) {
+            Logger::getInstance().debug(LogCategory::NETWORK, "握手失败: Sec-WebSocket-Key格式错误");
+            return false;
+        }
     }
     
     std::string webSocketKey = request.substr(keyStart, keyEnd - keyStart);
+    // 去除可能的空格
+    webSocketKey.erase(std::remove_if(webSocketKey.begin(), webSocketKey.end(), ::isspace), webSocketKey.end());
+    
+    // 检查WebSocket版本
+    std::string versionHeader = "Sec-WebSocket-Version: ";
+    size_t versionStart = request.find(versionHeader);
+    if (versionStart != std::string::npos) {
+        versionStart += versionHeader.length();
+        size_t versionEnd = request.find("\r\n", versionStart);
+        if (versionEnd != std::string::npos) {
+            std::string version = request.substr(versionStart, versionEnd - versionStart);
+            if (version != "13") {
+                Logger::getInstance().warning(LogCategory::NETWORK, 
+                    "不支持的WebSocket版本: " + version);
+                return false;
+            }
+        }
+    }
     
     // 计算Accept Key
     std::string combined = webSocketKey + WEB_SOCKET_GUID;
@@ -272,41 +381,79 @@ bool NetworkManager::Impl::performWebSocketHandshake(SOCKET clientSocket, const 
     // Base64编码
     std::string acceptKey = base64Encode(std::string(reinterpret_cast<char*>(hash), SHA_DIGEST_LENGTH));
     
-    // 发送握手响应
+    // 发送握手响应 - 使用更完整的响应格式
     std::string response = 
         "HTTP/1.1 101 Switching Protocols\r\n"
         "Upgrade: websocket\r\n"
         "Connection: Upgrade\r\n"
-        "Sec-WebSocket-Accept: " + acceptKey + "\r\n\r\n";
+        "Sec-WebSocket-Accept: " + acceptKey + "\r\n";
     
-    return sendRawData(clientSocket, response);
+    // 检查是否需要包含Sec-WebSocket-Version
+    if (requestLower.find("sec-websocket-version:") != std::string::npos) {
+        response += "Sec-WebSocket-Version: 13\r\n";
+    }
+    
+    // 添加额外的兼容性头部
+    response += "Server: MazeGameServer/1.0\r\n";
+    response += "\r\n";
+    
+    Logger::getInstance().debug(LogCategory::NETWORK, 
+        "WebSocket握手成功 - Key: " + webSocketKey + " - Accept: " + acceptKey);
+    
+    bool success = sendRawData(clientSocket, response);
+    if (!success) {
+        Logger::getInstance().warning(LogCategory::NETWORK, "发送握手响应失败");
+    }
+    return success;
 }
 
 std::string NetworkManager::Impl::base64Encode(const std::string& input) {
-    // 简化的base64编码实现
+    // 符合RFC 4648的base64编码实现
     const std::string base64_chars = 
         "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
         "abcdefghijklmnopqrstuvwxyz"
         "0123456789+/";
     
     std::string encoded;
-    int val = 0, valb = -6;
+    int i = 0;
+    int j = 0;
+    unsigned char char_array_3[3];
+    unsigned char char_array_4[4];
+    size_t in_len = input.size();
+    const char* bytes_to_encode = input.c_str();
     
-    for (unsigned char c : input) {
-        val = (val << 8) + c;
-        valb += 8;
-        while (valb >= 0) {
-            encoded.push_back(base64_chars[(val >> valb) & 0x3F]);
-            valb -= 6;
+    while (in_len--) {
+        char_array_3[i++] = *(bytes_to_encode++);
+        if (i == 3) {
+            char_array_4[0] = (char_array_3[0] & 0xfc) >> 2;
+            char_array_4[1] = ((char_array_3[0] & 0x03) << 4) + ((char_array_3[1] & 0xf0) >> 4);
+            char_array_4[2] = ((char_array_3[1] & 0x0f) << 2) + ((char_array_3[2] & 0xc0) >> 6);
+            char_array_4[3] = char_array_3[2] & 0x3f;
+            
+            for(i = 0; i < 4; i++) {
+                encoded += base64_chars[char_array_4[i]];
+            }
+            i = 0;
         }
     }
     
-    if (valb > -6) {
-        encoded.push_back(base64_chars[((val << 8) >> (valb + 8)) & 0x3F]);
-    }
-    
-    while (encoded.size() % 4) {
-        encoded.push_back('=');
+    if (i) {
+        for(j = i; j < 3; j++) {
+            char_array_3[j] = '\0';
+        }
+        
+        char_array_4[0] = (char_array_3[0] & 0xfc) >> 2;
+        char_array_4[1] = ((char_array_3[0] & 0x03) << 4) + ((char_array_3[1] & 0xf0) >> 4);
+        char_array_4[2] = ((char_array_3[1] & 0x0f) << 2) + ((char_array_3[2] & 0xc0) >> 6);
+        char_array_4[3] = char_array_3[2] & 0x3f;
+        
+        for (j = 0; j < i + 1; j++) {
+            encoded += base64_chars[char_array_4[j]];
+        }
+        
+        while(i++ < 3) {
+            encoded += '=';
+        }
     }
     
     return encoded;

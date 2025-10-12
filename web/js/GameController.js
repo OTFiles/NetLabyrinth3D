@@ -19,7 +19,9 @@ class GameController {
     
     init(game) {
         this.game = game;
+        this.game.log('初始化游戏控制器', 'info');
         this.setupEventListeners();
+        this.game.log('游戏事件监听器已设置', 'info');
     }
     
     setupEventListeners() {

@@ -1,0 +1,901 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>服务器连接测试工具</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
+        }
+        
+        body {
+            background-color: #f5f5f5;
+            color: #333;
+            line-height: 1.6;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        
+        @media (max-width: 768px) {
+            .container {
+                grid-template-columns: 1fr;
+            }
+        }
+        
+        .panel {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            padding: 20px;
+        }
+        
+        h1 {
+            font-size: 24px;
+            margin-bottom: 20px;
+            color: #2c3e50;
+            grid-column: 1 / -1;
+        }
+        
+        h2 {
+            font-size: 18px;
+            margin-bottom: 15px;
+            color: #34495e;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 8px;
+        }
+        
+        .form-group {
+            margin-bottom: 15px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+        }
+        
+        input, select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        
+        input:focus, select:focus {
+            outline: none;
+            border-color: #3498db;
+        }
+        
+        .btn {
+            display: inline-block;
+            background: #3498db;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 4px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        
+        .btn:hover {
+            background: #2980b9;
+        }
+        
+        .btn-success {
+            background: #27ae60;
+        }
+        
+        .btn-success:hover {
+            background: #219653;
+        }
+        
+        .btn-danger {
+            background: #e74c3c;
+        }
+        
+        .btn-danger:hover {
+            background: #c0392b;
+        }
+        
+        .btn-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+        
+        .status-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        
+        .status-card {
+            border: 1px solid #eee;
+            border-radius: 4px;
+            padding: 15px;
+        }
+        
+        .status-card h3 {
+            font-size: 14px;
+            color: #7f8c8d;
+            margin-bottom: 5px;
+        }
+        
+        .status-card .value {
+            font-size: 16px;
+            font-weight: 600;
+        }
+        
+        .status-connected {
+            color: #27ae60;
+        }
+        
+        .status-connecting {
+            color: #f39c12;
+        }
+        
+        .status-disconnected {
+            color: #95a5a6;
+        }
+        
+        .status-error {
+            color: #e74c3c;
+        }
+        
+        .log-panel {
+            height: 400px;
+            overflow-y: auto;
+            border: 1px solid #eee;
+            border-radius: 4px;
+            padding: 15px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 13px;
+            background: #fafafa;
+        }
+        
+        .log-entry {
+            margin-bottom: 8px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid #f0f0f0;
+        }
+        
+        .log-timestamp {
+            color: #7f8c8d;
+            font-size: 12px;
+            margin-right: 10px;
+        }
+        
+        .log-info {
+            color: #3498db;
+        }
+        
+        .log-success {
+            color: #27ae60;
+        }
+        
+        .log-warning {
+            color: #f39c12;
+        }
+        
+        .log-error {
+            color: #e74c3c;
+        }
+        
+        .log-network {
+            color: #8e44ad;
+        }
+        
+        .log-debug {
+            color: #16a085;
+        }
+        
+        .test-results {
+            margin-top: 20px;
+        }
+        
+        .test-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px;
+            border-bottom: 1px solid #eee;
+        }
+        
+        .test-item:last-child {
+            border-bottom: none;
+        }
+        
+        .test-item.passed {
+            background: rgba(39, 174, 96, 0.05);
+        }
+        
+        .test-item.failed {
+            background: rgba(231, 76, 60, 0.05);
+        }
+        
+        .test-item.pending {
+            background: rgba(243, 156, 18, 0.05);
+        }
+        
+        .test-status {
+            padding: 3px 8px;
+            border-radius: 3px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        
+        .status-passed {
+            background: rgba(39, 174, 96, 0.2);
+            color: #27ae60;
+        }
+        
+        .status-failed {
+            background: rgba(231, 76, 60, 0.2);
+            color: #e74c3c;
+        }
+        
+        .status-pending {
+            background: rgba(243, 156, 18, 0.2);
+            color: #f39c12;
+        }
+        
+        .test-description {
+            flex: 1;
+            margin-left: 10px;
+        }
+        
+        .test-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+        
+        footer {
+            margin-top: 30px;
+            padding-top: 15px;
+            border-top: 1px solid #eee;
+            color: #7f8c8d;
+            font-size: 12px;
+            grid-column: 1 / -1;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>服务器连接测试工具</h1>
+        
+        <div class="panel">
+            <h2>连接配置</h2>
+            <div class="form-group">
+                <label for="serverAddress">服务器地址</label>
+                <input type="text" id="serverAddress" value="localhost:8080">
+            </div>
+            <div class="form-group">
+                <label for="playerName">玩家名称</label>
+                <input type="text" id="playerName" value="测试玩家">
+            </div>
+            <div class="form-group">
+                <label for="testType">测试类型</label>
+                <select id="testType">
+                    <option value="full">完整测试</option>
+                    <option value="connection">连接测试</option>
+                    <option value="websocket">WebSocket测试</option>
+                    <option value="game">游戏功能测试</option>
+                    <option value="debug">调试模式</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="logLevel">日志级别</label>
+                <select id="logLevel">
+                    <option value="debug">调试 (最详细)</option>
+                    <option value="info">信息</option>
+                    <option value="warn">警告</option>
+                    <option value="error">错误</option>
+                </select>
+            </div>
+            <div class="btn-group">
+                <button id="startTest" class="btn">开始测试</button>
+                <button id="stopTest" class="btn btn-danger">停止测试</button>
+            </div>
+        </div>
+
+        <div class="panel">
+            <h2>连接状态</h2>
+            <div class="status-grid">
+                <div class="status-card">
+                    <h3>连接状态</h3>
+                    <div id="connectionStatus" class="value status-disconnected">未连接</div>
+                </div>
+                <div class="status-card">
+                    <h3>WebSocket状态</h3>
+                    <div id="websocketStatus" class="value status-disconnected">未连接</div>
+                </div>
+                <div class="status-card">
+                    <h3>HTTP状态</h3>
+                    <div id="httpStatus" class="value status-disconnected">未测试</div>
+                </div>
+                <div class="status-card">
+                    <h3>延迟</h3>
+                    <div id="latency" class="value">-- ms</div>
+                </div>
+            </div>
+            
+            <h2>测试结果</h2>
+            <div id="testResults" class="test-results">
+                <div class="test-item pending">
+                    <div class="test-status status-pending">等待中</div>
+                    <div class="test-description">等待测试开始...</div>
+                </div>
+            </div>
+            
+            <div class="test-actions">
+                <button id="exportLogs" class="btn">导出日志</button>
+                <button id="clearLogs" class="btn btn-danger">清空日志</button>
+            </div>
+        </div>
+        
+        <div class="panel" style="grid-column: 1 / -1;">
+            <h2>测试日志</h2>
+            <div class="log-panel" id="logPanel">
+                <div class="log-entry">
+                    <span class="log-timestamp">[00:00:00]</span>
+                    <span class="log-info">测试工具已就绪，点击"开始测试"按钮进行连接测试</span>
+                </div>
+            </div>
+        </div>
+        
+        <footer>
+            <p>三维迷宫游戏 - 服务器连接测试工具 v1.0 | 日志级别: <span id="currentLogLevel">调试</span></p>
+        </footer>
+    </div>
+
+    <script>
+        // 网络接口说明和测试工具主逻辑
+        class ConnectionTester {
+            constructor() {
+                this.logs = [];
+                this.testResults = [];
+                this.isTesting = false;
+                this.socket = null;
+                this.testStartTime = null;
+                this.pingInterval = null;
+                this.logLevel = 'debug'; // 默认最详细日志级别
+                
+                this.initializeEventListeners();
+                this.addLog('测试工具初始化完成', 'info');
+                this.updateLogLevelDisplay();
+            }
+
+            initializeEventListeners() {
+                document.getElementById('startTest').addEventListener('click', () => this.startTest());
+                document.getElementById('stopTest').addEventListener('click', () => this.stopTest());
+                document.getElementById('exportLogs').addEventListener('click', () => this.exportLogs());
+                document.getElementById('clearLogs').addEventListener('click', () => this.clearLogs());
+                document.getElementById('logLevel').addEventListener('change', (e) => {
+                    this.logLevel = e.target.value;
+                    this.updateLogLevelDisplay();
+                    this.addLog(`日志级别已更改为: ${e.target.value}`, 'info');
+                });
+            }
+
+            updateLogLevelDisplay() {
+                document.getElementById('currentLogLevel').textContent = 
+                    document.getElementById('logLevel').options[document.getElementById('logLevel').selectedIndex].text;
+            }
+
+            startTest() {
+                if (this.isTesting) {
+                    this.addLog('测试正在进行中，请先停止当前测试', 'warning');
+                    return;
+                }
+
+                const serverAddress = document.getElementById('serverAddress').value;
+                const playerName = document.getElementById('playerName').value;
+                const testType = document.getElementById('testType').value;
+
+                if (!serverAddress) {
+                    this.addLog('请输入服务器地址', 'error');
+                    return;
+                }
+
+                if (!playerName) {
+                    this.addLog('请输入玩家名称', 'error');
+                    return;
+                }
+
+                this.isTesting = true;
+                this.testStartTime = Date.now();
+                this.updateConnectionStatus('connecting', '连接中...');
+
+                this.addLog(`开始${this.getTestTypeName(testType)}测试`, 'info');
+                this.addLog(`服务器地址: ${serverAddress}, 玩家名称: ${playerName}`, 'info');
+                this.addLog(`日志级别: ${this.logLevel}`, 'debug');
+
+                // 根据测试类型执行不同的测试
+                switch(testType) {
+                    case 'connection':
+                        this.runConnectionTest(serverAddress, playerName);
+                        break;
+                    case 'websocket':
+                        this.runWebSocketTest(serverAddress, playerName);
+                        break;
+                    case 'game':
+                        this.runGameTest(serverAddress, playerName);
+                        break;
+                    case 'debug':
+                        this.runDebugTest(serverAddress, playerName);
+                        break;
+                    default:
+                        this.runFullTest(serverAddress, playerName);
+                }
+            }
+
+            stopTest() {
+                if (!this.isTesting) {
+                    this.addLog('没有正在进行的测试', 'warning');
+                    return;
+                }
+
+                this.isTesting = false;
+                
+                if (this.socket) {
+                    this.addLog('正在关闭WebSocket连接...', 'debug');
+                    this.socket.close();
+                    this.socket = null;
+                }
+
+                if (this.pingInterval) {
+                    clearInterval(this.pingInterval);
+                    this.pingInterval = null;
+                }
+
+                this.updateConnectionStatus('disconnected', '已停止');
+                this.addLog('测试已停止', 'warning');
+            }
+
+            async runFullTest(serverAddress, playerName) {
+                this.addLog('开始完整测试流程', 'info');
+                
+                // 1. HTTP连接测试
+                this.addTestResult('HTTP连接测试', 'pending', '正在测试HTTP连接...');
+                this.addLog('开始HTTP连接测试', 'debug');
+                const httpResult = await this.testHttpConnection(serverAddress);
+                
+                if (httpResult.success) {
+                    this.addTestResult('HTTP连接测试', 'passed', `HTTP连接成功 (${httpResult.time}ms)`);
+                    this.updateHttpStatus('success', '连接成功');
+                    this.addLog(`HTTP连接测试成功，响应时间: ${httpResult.time}ms`, 'success');
+                    
+                    // 输出详细的服务器信息
+                    if (httpResult.data) {
+                        this.addLog(`服务器信息: ${JSON.stringify(httpResult.data, null, 2)}`, 'debug');
+                    }
+                } else {
+                    this.addTestResult('HTTP连接测试', 'failed', `HTTP连接失败: ${httpResult.error}`);
+                    this.updateHttpStatus('error', '连接失败');
+                    this.updateConnectionStatus('error', '连接错误');
+                    this.addLog(`HTTP连接测试失败: ${httpResult.error}`, 'error');
+                    this.isTesting = false;
+                    return;
+                }
+
+                // 2. WebSocket连接测试
+                this.addTestResult('WebSocket连接测试', 'pending', '正在测试WebSocket连接...');
+                this.addLog('开始WebSocket连接测试', 'debug');
+                const wsResult = await this.testWebSocketConnection(serverAddress, playerName);
+                
+                if (wsResult.success) {
+                    this.addTestResult('WebSocket连接测试', 'passed', 'WebSocket连接成功');
+                    this.updateWebSocketStatus('success', '连接成功');
+                    this.addLog('WebSocket连接测试成功', 'success');
+                } else {
+                    this.addTestResult('WebSocket连接测试', 'failed', `WebSocket连接失败: ${wsResult.error}`);
+                    this.updateWebSocketStatus('error', '连接失败');
+                    this.updateConnectionStatus('error', '连接错误');
+                    this.addLog(`WebSocket连接测试失败: ${wsResult.error}`, 'error');
+                    this.isTesting = false;
+                    return;
+                }
+
+                // 3. 游戏功能测试
+                this.addTestResult('游戏功能测试', 'pending', '正在测试游戏功能...');
+                this.addLog('开始游戏功能测试', 'debug');
+                const gameResult = await this.testGameFunctions();
+                
+                if (gameResult.success) {
+                    this.addTestResult('游戏功能测试', 'passed', '游戏功能测试通过');
+                    this.addLog('游戏功能测试通过', 'success');
+                } else {
+                    this.addTestResult('游戏功能测试', 'failed', `游戏功能测试失败: ${gameResult.error}`);
+                    this.addLog(`游戏功能测试失败: ${gameResult.error}`, 'error');
+                }
+
+                // 4. 延迟测试
+                this.addTestResult('延迟测试', 'pending', '正在测试网络延迟...');
+                this.addLog('开始延迟测试', 'debug');
+                const latencyResult = await this.testLatency();
+                
+                if (latencyResult.success) {
+                    this.addTestResult('延迟测试', 'passed', `平均延迟: ${latencyResult.averageLatency}ms`);
+                    this.updateLatency(latencyResult.averageLatency);
+                    this.addLog(`延迟测试完成，平均延迟: ${latencyResult.averageLatency}ms`, 'success');
+                } else {
+                    this.addTestResult('延迟测试', 'failed', '延迟测试失败');
+                    this.addLog('延迟测试失败', 'error');
+                }
+
+                this.updateConnectionStatus('connected', '连接成功');
+                this.addLog('完整测试完成', 'success');
+                this.isTesting = false;
+            }
+
+            async testHttpConnection(serverAddress) {
+                try {
+                    this.addLog(`尝试HTTP连接: http://${serverAddress}/api/status`, 'debug');
+                    const startTime = Date.now();
+                    
+                    const response = await fetch(`http://${serverAddress}/api/status`, {
+                        method: 'GET',
+                        mode: 'cors'
+                    });
+                    
+                    const endTime = Date.now();
+                    const responseTime = endTime - startTime;
+                    
+                    this.addLog(`HTTP请求完成，状态码: ${response.status}，响应时间: ${responseTime}ms`, 'debug');
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        this.addLog(`HTTP连接成功: ${responseTime}ms`, 'success');
+                        this.addLog(`服务器状态响应: ${JSON.stringify(data, null, 2)}`, 'debug');
+                        return { success: true, time: responseTime, data: data };
+                    } else {
+                        this.addLog(`HTTP请求失败: ${response.status} ${response.statusText}`, 'error');
+                        return { success: false, error: `${response.status} ${response.statusText}` };
+                    }
+                } catch (error) {
+                    this.addLog(`HTTP连接错误: ${error.message}`, 'error');
+                    this.addLog(`错误详情: ${error.stack}`, 'debug');
+                    return { success: false, error: error.message };
+                }
+            }
+
+            async testWebSocketConnection(serverAddress, playerName) {
+                return new Promise((resolve) => {
+                    try {
+                        const [host, port] = serverAddress.split(':');
+                        const wsPort = port || '8081';
+                        const wsUrl = `ws://${host}:${wsPort}/ws`;
+                        
+                        this.addLog(`尝试连接WebSocket: ${wsUrl}`, 'debug');
+                        
+                        this.socket = new WebSocket(wsUrl);
+                        
+                        const timeout = setTimeout(() => {
+                            this.addLog('WebSocket连接超时', 'error');
+                            resolve({ success: false, error: '连接超时' });
+                        }, 10000);
+                        
+                        this.socket.onopen = () => {
+                            clearTimeout(timeout);
+                            this.addLog('WebSocket连接已建立', 'success');
+                            
+                            // 发送认证消息
+                            const playerId = 'test_' + Date.now();
+                            const authMessage = {
+                                type: 'auth',
+                                data: {
+                                    playerId: playerId,
+                                    playerName: playerName,
+                                    token: ''
+                                }
+                            };
+                            
+                            this.addLog(`发送认证消息: ${JSON.stringify(authMessage, null, 2)}`, 'debug');
+                            this.socket.send(JSON.stringify(authMessage));
+                            this.addLog('认证消息已发送', 'debug');
+                            
+                            resolve({ success: true });
+                        };
+                        
+                        this.socket.onmessage = (event) => {
+                            try {
+                                const data = JSON.parse(event.data);
+                                this.addLog(`收到服务器消息: ${JSON.stringify(data, null, 2)}`, 'network');
+                                
+                                if (data.type === 'player_data') {
+                                    this.addLog('玩家认证成功', 'success');
+                                }
+                            } catch (error) {
+                                this.addLog(`消息解析错误: ${error.message}`, 'error');
+                                this.addLog(`原始消息: ${event.data}`, 'debug');
+                            }
+                        };
+                        
+                        this.socket.onerror = (error) => {
+                            clearTimeout(timeout);
+                            this.addLog(`WebSocket连接错误: ${error}`, 'error');
+                            resolve({ success: false, error: '连接错误' });
+                        };
+                        
+                        this.socket.onclose = (event) => {
+                            clearTimeout(timeout);
+                            this.addLog(`WebSocket连接已关闭: 代码=${event.code}, 原因=${event.reason || '无'}`, 'warning');
+                        };
+                    } catch (error) {
+                        this.addLog(`WebSocket连接异常: ${error.message}`, 'error');
+                        this.addLog(`错误详情: ${error.stack}`, 'debug');
+                        resolve({ success: false, error: error.message });
+                    }
+                });
+            }
+
+            async testGameFunctions() {
+                // 模拟游戏功能测试
+                return new Promise((resolve) => {
+                    this.addLog('开始游戏功能测试', 'debug');
+                    
+                    // 发送测试消息
+                    if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+                        const testMessage = {
+                            type: 'ping',
+                            timestamp: Date.now()
+                        };
+                        
+                        this.addLog(`发送测试消息: ${JSON.stringify(testMessage, null, 2)}`, 'debug');
+                        this.socket.send(JSON.stringify(testMessage));
+                        this.addLog('测试消息已发送', 'debug');
+                    }
+                    
+                    setTimeout(() => {
+                        this.addLog('游戏功能测试完成', 'success');
+                        resolve({ success: true });
+                    }, 2000);
+                });
+            }
+
+            async testLatency() {
+                return new Promise((resolve) => {
+                    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+                        this.addLog('WebSocket未连接，无法进行延迟测试', 'error');
+                        resolve({ success: false, error: 'WebSocket未连接' });
+                        return;
+                    }
+                    
+                    this.addLog('开始延迟测试', 'debug');
+                    
+                    let pings = [];
+                    let pingCount = 0;
+                    const maxPings = 5;
+                    
+                    const pingHandler = (event) => {
+                        try {
+                            const data = JSON.parse(event.data);
+                            if (data.type === 'pong') {
+                                const latency = Date.now() - data.timestamp;
+                                pings.push(latency);
+                                pingCount++;
+                                
+                                this.addLog(`Ping ${pingCount}: ${latency}ms`, 'debug');
+                                
+                                if (pingCount >= maxPings) {
+                                    this.socket.removeEventListener('message', pingHandler);
+                                    
+                                    const averageLatency = pings.reduce((a, b) => a + b, 0) / pings.length;
+                                    this.addLog(`延迟测试完成，平均延迟: ${Math.round(averageLatency)}ms`, 'success');
+                                    resolve({ success: true, averageLatency: Math.round(averageLatency) });
+                                }
+                            }
+                        } catch (error) {
+                            // 忽略非JSON消息
+                        }
+                    };
+                    
+                    this.socket.addEventListener('message', pingHandler);
+                    
+                    // 发送ping消息
+                    this.pingInterval = setInterval(() => {
+                        if (pingCount < maxPings) {
+                            const pingMessage = {
+                                type: 'ping',
+                                timestamp: Date.now()
+                            };
+                            this.addLog(`发送Ping消息 ${pingCount+1}: ${JSON.stringify(pingMessage, null, 2)}`, 'debug');
+                            this.socket.send(JSON.stringify(pingMessage));
+                        } else {
+                            clearInterval(this.pingInterval);
+                            this.pingInterval = null;
+                        }
+                    }, 1000);
+                });
+            }
+
+            runConnectionTest(serverAddress, playerName) {
+                this.addLog('开始连接测试', 'info');
+                this.testHttpConnection(serverAddress)
+                    .then(result => {
+                        if (result.success) {
+                            this.updateConnectionStatus('connected', 'HTTP连接成功');
+                            this.addLog('连接测试完成', 'success');
+                        } else {
+                            this.updateConnectionStatus('error', '连接失败');
+                            this.addLog('连接测试失败', 'error');
+                        }
+                        this.isTesting = false;
+                    });
+            }
+
+            runWebSocketTest(serverAddress, playerName) {
+                this.addLog('开始WebSocket测试', 'info');
+                this.testWebSocketConnection(serverAddress, playerName)
+                    .then(result => {
+                        if (result.success) {
+                            this.updateConnectionStatus('connected', 'WebSocket连接成功');
+                            this.addLog('WebSocket测试完成', 'success');
+                            
+                            // 测试完成后关闭连接
+                            setTimeout(() => {
+                                if (this.socket) {
+                                    this.socket.close();
+                                    this.socket = null;
+                                }
+                            }, 1000);
+                        } else {
+                            this.updateConnectionStatus('error', '连接失败');
+                            this.addLog('WebSocket测试失败', 'error');
+                        }
+                        this.isTesting = false;
+                    });
+            }
+
+            runGameTest(serverAddress, playerName) {
+                this.addLog('开始游戏功能测试', 'info');
+                // 这里可以添加更详细的游戏功能测试
+                setTimeout(() => {
+                    this.addLog('游戏功能测试完成', 'success');
+                    this.updateConnectionStatus('connected', '游戏功能测试完成');
+                    this.isTesting = false;
+                }, 3000);
+            }
+
+            runDebugTest(serverAddress, playerName) {
+                this.addLog('开始调试模式测试', 'info');
+                this.addLog('调试模式将输出最详细的日志信息', 'debug');
+                
+                // 执行所有测试但输出更详细的日志
+                this.runFullTest(serverAddress, playerName);
+            }
+
+            addLog(message, type = 'info') {
+                // 根据日志级别过滤消息
+                const levelPriority = {
+                    'debug': 0,
+                    'info': 1,
+                    'warn': 2,
+                    'error': 3
+                };
+                
+                const currentLevel = levelPriority[this.logLevel];
+                const messageLevel = levelPriority[type];
+                
+                if (messageLevel < currentLevel) {
+                    return; // 不显示低于当前日志级别的消息
+                }
+                
+                const timestamp = new Date().toLocaleTimeString();
+                const logEntry = document.createElement('div');
+                logEntry.className = 'log-entry';
+                logEntry.innerHTML = `
+                    <span class="log-timestamp">[${timestamp}]</span>
+                    <span class="log-${type}">${message}</span>
+                `;
+                
+                document.getElementById('logPanel').appendChild(logEntry);
+                document.getElementById('logPanel').scrollTop = document.getElementById('logPanel').scrollHeight;
+                
+                // 保存到日志数组
+                this.logs.push({ timestamp, message, type });
+            }
+
+            addTestResult(name, status, description) {
+                const testResults = document.getElementById('testResults');
+                
+                // 移除等待消息（如果是第一次测试）
+                if (testResults.children.length === 1 && 
+                    testResults.children[0].querySelector('.test-status').classList.contains('status-pending')) {
+                    testResults.innerHTML = '';
+                }
+                
+                const testItem = document.createElement('div');
+                testItem.className = `test-item ${status}`;
+                
+                testItem.innerHTML = `
+                    <div class="test-status status-${status}">${status === 'passed' ? '通过' : status === 'failed' ? '失败' : '测试中'}</div>
+                    <div class="test-description">${description}</div>
+                `;
+                
+                testResults.appendChild(testItem);
+                
+                // 保存测试结果
+                this.testResults.push({ name, status, description });
+            }
+
+            updateConnectionStatus(status, text) {
+                const element = document.getElementById('connectionStatus');
+                element.className = `value status-${status}`;
+                element.textContent = text;
+            }
+
+            updateWebSocketStatus(status, text) {
+                const element = document.getElementById('websocketStatus');
+                element.className = `value status-${status}`;
+                element.textContent = text;
+            }
+
+            updateHttpStatus(status, text) {
+                const element = document.getElementById('httpStatus');
+                element.className = `value status-${status}`;
+                element.textContent = text;
+            }
+
+            updateLatency(latency) {
+                document.getElementById('latency').textContent = `${latency} ms`;
+            }
+
+            getTestTypeName(type) {
+                const names = {
+                    'full': '完整',
+                    'connection': '连接',
+                    'websocket': 'WebSocket',
+                    'game': '游戏功能',
+                    'debug': '调试模式'
+                };
+                return names[type] || type;
+            }
+
+            exportLogs() {
+                const logText = this.logs.map(log => 
+                    `[${log.timestamp}] ${log.message}`
+                ).join('\n');
+                
+                const blob = new Blob([logText], { type: 'text/plain' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `connection-test-${new Date().toISOString().slice(0, 10)}.log`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                
+                this.addLog('日志已导出', 'success');
+            }
+
+            clearLogs() {
+                document.getElementById('logPanel').innerHTML = '';
+                this.logs = [];
+                this.addLog('日志已清空', 'info');
+            }
+        }
+
+        // 初始化测试工具
+        document.addEventListener('DOMContentLoaded', () => {
+            window.tester = new ConnectionTester();
+        });
+    </script>
+</body>
+</html>

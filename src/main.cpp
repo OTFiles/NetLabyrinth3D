@@ -183,6 +183,7 @@ CommandLineArgs parseCommandLine(int argc, char* argv[]) {
 
 // 控制台命令处理线程
 void consoleCommandThread(CommandSystem& commandSystem) {
+    std::string CommandUser = "root";
     std::string input;
     TerminalSettings terminal;
     
@@ -246,7 +247,7 @@ void consoleCommandThread(CommandSystem& commandSystem) {
         }
         
         // 执行命令
-        CommandResult result = commandSystem.ExecuteCommand(input, "admin");
+        CommandResult result = commandSystem.ExecuteCommand(input, CommandUser);
         std::cout << (result.success ? "\033[1;32m[成功]\033[0m " : "\033[1;31m[失败]\033[0m ") << result.message << std::endl;
     }
     

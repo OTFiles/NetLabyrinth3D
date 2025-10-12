@@ -25,6 +25,7 @@ class Renderer3D {
     
     init(game) {
         this.game = game;
+        this.game.log('初始化3D渲染器', 'info');
         
         // 创建场景
         this.scene = new THREE.Scene();
@@ -46,7 +47,12 @@ class Renderer3D {
         
         // 添加到DOM
         const container = document.getElementById('gameContainer');
-        container.appendChild(this.renderer.domElement);
+        if (container) {
+            container.appendChild(this.renderer.domElement);
+            this.game.log('3D渲染器已添加到DOM', 'info');
+        } else {
+            this.game.log('错误: 未找到gameContainer元素', 'error');
+        }
         
         // 设置灯光
         this.setupLighting();
@@ -59,6 +65,8 @@ class Renderer3D {
         
         // 添加雾效
         this.scene.fog = new THREE.Fog(0x87CEEB, 50, 200);
+        
+        this.game.log('3D渲染器初始化完成', 'info');
     }
     
     setupLighting() {

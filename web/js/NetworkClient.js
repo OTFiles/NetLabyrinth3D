@@ -18,11 +18,22 @@ class NetworkClient {
 
     async connect(serverAddress, playerName) {
         if (this.connectionState === 'connecting') {
-            throw new Error('正在连接中，请稍候...');
+            const errorMsg = '正在连接中，请稍候...';
+            this.game.log(`网络连接错误: ${errorMsg}`, 'error');
+            throw new Error(errorMsg);
         }
         
         this.connectionState = 'connecting';
         this.game.uiManager.showConnectionModal('正在连接服务器...');
+        this.game.log(`开始连接服务器: ${serverAddress}, 玩家: ${playerName}`, 'network');
+        
+        // 记录连接详细信息用于调试
+        console.log('连接详细信息:', {
+            serverAddress,
+            playerName,
+            wsPort: this.wsPort,
+            fullUrl: this.buildWebSocketUrl(serverAddress)
+        });
         
         try {
             // 1. 获取服务器配置
@@ -35,6 +46,7 @@ class NetworkClient {
             this.reconnectAttempts = 0;
             this.game.uiManager.hideConnectionModal();
             this.game.uiManager.showMessage('连接服务器成功！', 'success');
+            this.game.log('WebSocket连接建立成功', 'network');
             
             // 开始连接状态检查
             this.startConnectionMonitoring();
@@ -42,6 +54,7 @@ class NetworkClient {
         } catch (error) {
             this.connectionState = 'error';
             this.game.uiManager.hideConnectionModal();
+            this.game.log(`连接服务器失败: ${error.message}`, 'error');
             throw error;
         }
     }
@@ -89,6 +102,7 @@ class NetworkClient {
                 const wsUrl = this.buildWebSocketUrl(serverAddress);
                 console.log('Connecting to WebSocket:', wsUrl);
                 
+                // 创建简单的WebSocket连接，不添加额外选项
                 this.socket = new WebSocket(wsUrl);
                 
                 const connectionTimeout = setTimeout(() => {
@@ -98,29 +112,58 @@ class NetworkClient {
                     }
                 }, 10000);
                 
+                // 认证成功标志
+                let authSuccess = false;
+                const authTimeout = setTimeout(() => {
+                    if (!authSuccess) {
+                        this.socket.close();
+                        reject(new Error('认证超时'));
+                    }
+                }, 5000);
+                
                 this.socket.onopen = () => {
                     clearTimeout(connectionTimeout);
                     console.log('WebSocket connection established');
                     
-                    // 发送认证消息（新的格式）
+                    // 发送认证消息
                     this.sendAuth(playerName);
-                    resolve();
                 };
                 
                 this.socket.onmessage = (event) => {
-                    if (this.game && typeof this.game.handleServerMessage === 'function') {
-                        this.game.handleServerMessage(event.data);
+                    try {
+                        const data = JSON.parse(event.data);
+                        // 检查是否是认证成功消息
+                        if (data.type === 'auth_success' || data.status === 'success') {
+                            clearTimeout(authTimeout);
+                            authSuccess = true;
+                            resolve();
+                        } else if (data.type === 'auth_failed' || data.status === 'failed') {
+                            clearTimeout(authTimeout);
+                            reject(new Error(data.message || '认证失败'));
+                        }
+                        
+                        if (this.game && typeof this.game.handleServerMessage === 'function') {
+                            this.game.handleServerMessage(event.data);
+                        }
+                    } catch (error) {
+                        console.error('处理消息错误:', error);
+                        // 即使解析失败，也传递给游戏处理
+                        if (this.game && typeof this.game.handleServerMessage === 'function') {
+                            this.game.handleServerMessage(event.data);
+                        }
                     }
                 };
                 
                 this.socket.onclose = (event) => {
                     clearTimeout(connectionTimeout);
+                    clearTimeout(authTimeout);
                     console.log('WebSocket connection closed:', event.code, event.reason);
                     this.handleDisconnection(event);
                 };
                 
                 this.socket.onerror = (error) => {
                     clearTimeout(connectionTimeout);
+                    clearTimeout(authTimeout);
                     console.error('WebSocket error:', error);
                     reject(new Error('WebSocket连接错误'));
                 };
@@ -143,8 +186,25 @@ class NetworkClient {
     }
 
     buildWebSocketUrl(serverAddress) {
-        const [host] = serverAddress.split(':');
-        return `ws://${host}:${this.wsPort}/ws`;
+        // 处理服务器地址，提取主机名和端口
+        let host = 'localhost';
+        let port = this.wsPort;
+        
+        if (serverAddress.includes('://')) {
+            const url = new URL(serverAddress);
+            host = url.hostname;
+            port = url.port || this.wsPort;
+        } else {
+            const parts = serverAddress.split(':');
+            host = parts[0];
+            if (parts.length > 1) {
+                // 使用Web服务器端口来推断WebSocket端口
+                const webPort = parseInt(parts[1]);
+                port = webPort + 1; // 假设WebSocket端口是Web端口+1
+            }
+        }
+        
+        return `ws://${host}:${port}/`;
     }
 
     async fetchWithTimeout(url, options = {}) {
@@ -225,15 +285,26 @@ class NetworkClient {
             try {
                 const message = JSON.stringify(data);
                 this.socket.send(message);
+                this.game.log(`发送消息: ${data.type}`, 'network');
                 return true;
             } catch (error) {
-                console.error('Failed to send message:', error);
+                this.game.log(`发送消息失败: ${error.message}`, 'error');
                 return false;
             }
         } else {
-            console.warn('WebSocket is not open. Message not sent:', data);
+            this.game.log(`WebSocket未连接，消息未发送: ${data.type}`, 'warning');
             return false;
         }
+    }
+
+    // 新的消息发送方法，使用统一的消息格式
+    sendMessage(type, data = {}) {
+        const message = {
+            type: type,
+            timestamp: Date.now(),
+            data: data
+        };
+        return this.send(message);
     }
 
     // 发送玩家移动消息
@@ -312,11 +383,25 @@ class NetworkClient {
         const playerId = localStorage.getItem('playerId') || this.generatePlayerId();
         const token = localStorage.getItem('playerToken') || '';
         
-        return this.sendMessage('auth', {
-            playerId: playerId,
-            playerName: playerName,
-            token: token
-        });
+        // 立即发送认证消息，使用服务器期望的简单格式
+        if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+            const authMessage = JSON.stringify({
+                type: 'auth',
+                playerId: playerId,
+                playerName: playerName,
+                token: token
+            });
+            
+            try {
+                this.socket.send(authMessage);
+                this.game.log(`发送认证消息: ${playerName}`, 'network');
+                return true;
+            } catch (error) {
+                this.game.log(`发送认证消息失败: ${error.message}`, 'error');
+                return false;
+            }
+        }
+        return false;
     }
 
     // 生成玩家ID

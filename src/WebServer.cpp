@@ -58,18 +58,18 @@ bool WebServer::initialize(const std::string& webRootPath, int httpPort) {
     // 检查web根目录是否存在
     std::ifstream testFile(webRootPath_ + "/index.html");
     if (!testFile.is_open()) {
-        Logger::getInstance().error(LogCategory::WEB, "WebServer: Web root directory not found: " + webRootPath_);
+        Logger::getInstance().error(LogCategory::WEB, "WebServer: 未找到网站根目录: " + webRootPath_);
         return false;
     }
     testFile.close();
     
-    Logger::getInstance().info(LogCategory::WEB, "WebServer: Initialized with web root: " + webRootPath_);
+    Logger::getInstance().info(LogCategory::WEB, "WebServer: 已使用网站根目录初始化: " + webRootPath_);
     return true;
 }
 
 bool WebServer::startServer() {
     if (serverRunning_) {
-        Logger::getInstance().warning(LogCategory::WEB, "WebServer: Server is already running");
+        Logger::getInstance().warning(LogCategory::WEB, "WebServer: 服务器已在运行");
         return true;
     }
     

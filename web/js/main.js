@@ -25,11 +25,19 @@ class MazeGame {
             mazeData: null,
             gameStarted: false
         };
+
+        // 调试系统
+        this.debugEnabled = true;
+        this.debugLogs = [];
+        this.maxDebugLogs = 100;
         
         this.init();
     }
     
     async init() {
+        // 初始化调试系统
+        this.initDebugSystem();
+        
         // 初始化UI管理器
         this.uiManager.init(this);
         
@@ -47,6 +55,8 @@ class MazeGame {
         
         // 切换到登录界面
         this.showLoginScreen();
+
+        this.log('游戏初始化完成', 'info');
     }
     
     async preloadResources() {
@@ -91,6 +101,88 @@ class MazeGame {
             img.onerror = reject;
             img.src = src;
         });
+    }
+
+    // 调试系统方法
+    initDebugSystem() {
+        this.log('初始化调试系统', 'info');
+        
+        // 添加全局调试方法
+        window.debugLog = (message, type = 'info') => {
+            this.log(message, type);
+        };
+
+        // 添加键盘快捷键显示/隐藏调试面板
+        document.addEventListener('keydown', (event) => {
+            if (event.code === 'F12' || (event.ctrlKey && event.shiftKey && event.code === 'KeyD')) {
+                event.preventDefault();
+                this.toggleDebugPanel();
+            }
+        });
+    }
+
+    log(message, type = 'info') {
+        if (!this.debugEnabled) return;
+        
+        const timestamp = new Date().toLocaleTimeString();
+        const logEntry = {
+            timestamp: timestamp,
+            message: message,
+            type: type
+        };
+        
+        this.debugLogs.push(logEntry);
+        
+        // 限制日志数量
+        if (this.debugLogs.length > this.maxDebugLogs) {
+            this.debugLogs.shift();
+        }
+        
+        // 更新调试面板
+        this.updateDebugPanel();
+        
+        // 同时在控制台输出
+        const consoleMethod = type === 'error' ? 'error' : 
+                             type === 'warning' ? 'warn' : 'log';
+        console[consoleMethod](`[${timestamp}] ${message}`);
+    }
+
+    updateDebugPanel() {
+        const debugContent = document.getElementById('debugContent');
+        if (!debugContent) return;
+        
+        debugContent.innerHTML = '';
+        
+        this.debugLogs.forEach(log => {
+            const logElement = document.createElement('div');
+            logElement.className = `debug-log ${log.type}`;
+            logElement.innerHTML = `
+                <span class="timestamp">[${log.timestamp}]</span> ${log.message}
+            `;
+            debugContent.appendChild(logElement);
+        });
+        
+        // 自动滚动到底部
+        debugContent.scrollTop = debugContent.scrollHeight;
+    }
+
+    toggleDebugPanel() {
+        const debugPanel = document.getElementById('debugPanel');
+        if (debugPanel) {
+            const isHidden = debugPanel.style.display === 'none';
+            debugPanel.style.display = isHidden ? 'flex' : 'none';
+            
+            const toggleButton = document.getElementById('toggleDebug');
+            if (toggleButton) {
+                toggleButton.textContent = isHidden ? '隐藏' : '显示';
+            }
+        }
+    }
+
+    clearDebugLogs() {
+        this.debugLogs = [];
+        this.updateDebugPanel();
+        this.log('调试日志已清空', 'info');
     }
     
     updateLoadingProgress(progress) {
@@ -158,14 +250,17 @@ class MazeGame {
     
     // 连接服务器
     connectToServer(playerName, serverAddress) {
+        this.log(`尝试连接到服务器: ${serverAddress}, 玩家: ${playerName}`, 'network');
         this.gameState.playerName = playerName;
         
         this.networkClient.connect(serverAddress, playerName)
             .then(() => {
                 this.gameState.isConnected = true;
+                this.log('服务器连接成功，切换到游戏界面', 'network');
                 this.showGameScreen();
             })
             .catch(error => {
+                this.log(`服务器连接失败: ${error.message}`, 'error');
                 this.uiManager.showMessage(`连接失败: ${error.message}`, 'error');
             });
     }
@@ -194,11 +289,22 @@ class MazeGame {
     // 处理服务器消息
     handleServerMessage(message) {
         try {
-            const data = JSON.parse(message);
+            let data;
             
-            // 统一的消息格式处理
-            const messageType = data.type;
+            // 首先尝试直接解析消息
+            try {
+                data = JSON.parse(message);
+            } catch (e) {
+                // 如果不是JSON，可能是简单文本消息
+                this.log(`收到非JSON消息: ${message}`, 'network');
+                return;
+            }
+            
+            // 处理不同的消息格式
+            const messageType = data.type || data.eventType;
             const messageData = data.data || data; // 兼容两种格式
+
+            this.log(`收到服务器消息: ${messageType}`, 'network');
             
             switch (messageType) {
                 case 'player_join':
@@ -236,11 +342,20 @@ class MazeGame {
                     break;
                 case 'pong': // 处理ping/pong心跳
                     this.lastPongTime = Date.now();
+                    this.log('收到心跳响应', 'network');
+                    break;
+                case 'auth_success': // 处理认证成功
+                    this.handleAuthSuccess(messageData);
+                    break;
+                case 'auth_failed': // 处理认证失败
+                    this.handleAuthFailed(messageData);
                     break;
                 default:
+                    this.log(`未知消息类型: ${messageType}`, 'warning');
                     console.warn('未知消息类型:', messageType, messageData);
             }
         } catch (error) {
+            this.log(`消息处理错误: ${error.message}`, 'error');
             console.error('消息处理错误:', error, message);
         }
     }
@@ -268,6 +383,31 @@ class MazeGame {
             this.gameState.coins = data.totalCoins || this.gameState.coins;
             this.uiManager.updatePlayerInfo(this.gameState.playerName, this.gameState.coins);
         }
+    }
+    
+    // 处理认证成功
+    handleAuthSuccess(data) {
+        this.log('认证成功', 'network');
+        this.gameState.playerId = data.playerId || data.id;
+        this.gameState.isConnected = true;
+        
+        // 保存token到本地存储
+        if (data.token) {
+            localStorage.setItem('playerToken', data.token);
+        }
+        
+        this.uiManager.showMessage('认证成功，加入游戏中...', 'success');
+        
+        // 认证成功后切换到游戏界面
+        this.showGameScreen();
+    }
+    
+    // 处理认证失败
+    handleAuthFailed(data) {
+        this.log(`认证失败: ${data.message}`, 'error');
+        this.uiManager.showMessage(`认证失败: ${data.message}`, 'error');
+        this.networkClient.disconnect();
+        this.showLoginScreen();
     }
     
     // 处理玩家到达终点
