@@ -335,6 +335,12 @@ class MazeGame {
                     this.lastPongTime = Date.now();
                     this.log('收到心跳响应', 'network');
                     break;
+                case 'auth_success': // 处理认证成功
+                    this.handleAuthSuccess(messageData);
+                    break;
+                case 'auth_failed': // 处理认证失败
+                    this.handleAuthFailed(messageData);
+                    break;
                 default:
                     this.log(`未知消息类型: ${messageType}`, 'warning');
                     console.warn('未知消息类型:', messageType, messageData);
@@ -368,6 +374,28 @@ class MazeGame {
             this.gameState.coins = data.totalCoins || this.gameState.coins;
             this.uiManager.updatePlayerInfo(this.gameState.playerName, this.gameState.coins);
         }
+    }
+    
+    // 处理认证成功
+    handleAuthSuccess(data) {
+        this.log('认证成功', 'network');
+        this.gameState.playerId = data.playerId;
+        this.gameState.isConnected = true;
+        
+        // 保存token到本地存储
+        if (data.token) {
+            localStorage.setItem('playerToken', data.token);
+        }
+        
+        this.uiManager.showMessage('认证成功，加入游戏中...', 'success');
+    }
+    
+    // 处理认证失败
+    handleAuthFailed(data) {
+        this.log(`认证失败: ${data.message}`, 'error');
+        this.uiManager.showMessage(`认证失败: ${data.message}`, 'error');
+        this.networkClient.disconnect();
+        this.showLoginScreen();
     }
     
     // 处理玩家到达终点

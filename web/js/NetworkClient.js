@@ -103,29 +103,54 @@ class NetworkClient {
                     }
                 }, 10000);
                 
+                // 认证成功标志
+                let authSuccess = false;
+                const authTimeout = setTimeout(() => {
+                    if (!authSuccess) {
+                        this.socket.close();
+                        reject(new Error('认证超时'));
+                    }
+                }, 5000);
+                
                 this.socket.onopen = () => {
                     clearTimeout(connectionTimeout);
                     console.log('WebSocket connection established');
                     
-                    // 发送认证消息（新的格式）
+                    // 发送认证消息
                     this.sendAuth(playerName);
-                    resolve();
                 };
                 
                 this.socket.onmessage = (event) => {
-                    if (this.game && typeof this.game.handleServerMessage === 'function') {
-                        this.game.handleServerMessage(event.data);
+                    try {
+                        const data = JSON.parse(event.data);
+                        // 检查是否是认证成功消息
+                        if (data.type === 'auth_success') {
+                            clearTimeout(authTimeout);
+                            authSuccess = true;
+                            resolve();
+                        } else if (data.type === 'auth_failed') {
+                            clearTimeout(authTimeout);
+                            reject(new Error(data.data?.message || '认证失败'));
+                        }
+                        
+                        if (this.game && typeof this.game.handleServerMessage === 'function') {
+                            this.game.handleServerMessage(event.data);
+                        }
+                    } catch (error) {
+                        console.error('处理消息错误:', error);
                     }
                 };
                 
                 this.socket.onclose = (event) => {
                     clearTimeout(connectionTimeout);
+                    clearTimeout(authTimeout);
                     console.log('WebSocket connection closed:', event.code, event.reason);
                     this.handleDisconnection(event);
                 };
                 
                 this.socket.onerror = (error) => {
                     clearTimeout(connectionTimeout);
+                    clearTimeout(authTimeout);
                     console.error('WebSocket error:', error);
                     reject(new Error('WebSocket连接错误'));
                 };
@@ -149,7 +174,7 @@ class NetworkClient {
 
     buildWebSocketUrl(serverAddress) {
         const [host] = serverAddress.split(':');
-        return `ws://${host}:${this.wsPort}/ws`;
+        return `ws://${host}:${this.wsPort}/`;
     }
 
     async fetchWithTimeout(url, options = {}) {
@@ -242,6 +267,16 @@ class NetworkClient {
         }
     }
 
+    // 新的消息发送方法，使用统一的消息格式
+    sendMessage(type, data = {}) {
+        const message = {
+            type: type,
+            timestamp: Date.now(),
+            data: data
+        };
+        return this.send(message);
+    }
+
     // 发送玩家移动消息
     sendPlayerMove(position, rotation) {
         return this.sendMessage('move', {
@@ -318,11 +353,28 @@ class NetworkClient {
         const playerId = localStorage.getItem('playerId') || this.generatePlayerId();
         const token = localStorage.getItem('playerToken') || '';
         
-        return this.sendMessage('auth', {
-            playerId: playerId,
-            playerName: playerName,
-            token: token
-        });
+        // 立即发送认证消息，不等待sendMessage的队列
+        if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+            const authMessage = {
+                type: 'auth',
+                timestamp: Date.now(),
+                data: {
+                    playerId: playerId,
+                    playerName: playerName,
+                    token: token
+                }
+            };
+            
+            try {
+                this.socket.send(JSON.stringify(authMessage));
+                this.game.log(`发送认证消息: ${playerName}`, 'network');
+                return true;
+            } catch (error) {
+                this.game.log(`发送认证消息失败: ${error.message}`, 'error');
+                return false;
+            }
+        }
+        return false;
     }
 
     // 生成玩家ID
