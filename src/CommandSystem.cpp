@@ -5,8 +5,9 @@
 #include <cctype>
 
 // 默认管理员列表（可在配置中修改）
-const std::vector<std::string> CommandSystem::DEFAULT_ADMINS = {
-    "admin", "root"
+const std::vector<std::pair<std::string, AdminLevel>> CommandSystem::DEFAULT_ADMINS = {
+    {"admin", AdminLevel::ADMIN},
+    {"root", AdminLevel::ROOT}  // root 拥有最高权限
 };
 
 CommandSystem::CommandSystem(GameLogic& gameLogic, PlayerManager& playerManager)
@@ -14,8 +15,8 @@ CommandSystem::CommandSystem(GameLogic& gameLogic, PlayerManager& playerManager)
     RegisterCommands();
     
     // 添加默认管理员
-    for (const auto& adminId : DEFAULT_ADMINS) {
-        admins_[adminId] = AdminLevel::ADMIN;
+    for (const auto& [adminId, level] : DEFAULT_ADMINS) {
+        admins_[adminId] = level;
     }
 }
 
@@ -25,19 +26,82 @@ CommandSystem::~CommandSystem() {
 
 void CommandSystem::RegisterCommands() {
     // 注册所有可用命令
-    commandHandlers_ = {
-        {"give", [this](const auto& args, const auto& executor) { return HandleGive(args, executor); }},
-        {"tp", [this](const auto& args, const auto& executor) { return HandleTeleport(args, executor); }},
-        {"kick", [this](const auto& args, const auto& executor) { return HandleKick(args, executor); }},
-        {"kill", [this](const auto& args, const auto& executor) { return HandleKill(args, executor); }},
-        {"clear", [this](const auto& args, const auto& executor) { return HandleClear(args, executor); }},
-        {"coin", [this](const auto& args, const auto& executor) { return HandleCoin(args, executor); }},
-        {"system", [this](const auto& args, const auto& executor) { return HandleSystem(args, executor); }},
-        {"help", [this](const auto& args, const auto& executor) { return HandleHelp(args, executor); }},
-        {"admin", [this](const auto& args, const auto& executor) { return HandleAdmin(args, executor); }},
-        {"players", [this](const auto& args, const auto& executor) { return HandleListPlayers(args, executor); }},
-        {"restart", [this](const auto& args, const auto& executor) { return HandleRestart(args, executor); }}
-    };
+    RegisterCommand("give", 
+        [this](const auto& args, const auto& executor) { return HandleGive(args, executor); },
+        "Give item to player", 
+        "give <player> <item> [count]",
+        AdminLevel::ADMIN);
+        
+    RegisterCommand("tp", 
+        [this](const auto& args, const auto& executor) { return HandleTeleport(args, executor); },
+        "Teleport player", 
+        "tp <player> <x> <y> <z>",
+        AdminLevel::ADMIN);
+        
+    RegisterCommand("kick", 
+        [this](const auto& args, const auto& executor) { return HandleKick(args, executor); },
+        "Kick player from game", 
+        "kick <player> [reason]",
+        AdminLevel::MODERATOR);
+        
+    RegisterCommand("kill", 
+        [this](const auto& args, const auto& executor) { return HandleKill(args, executor); },
+        "Kill player", 
+        "kill <player>",
+        AdminLevel::MODERATOR);
+        
+    RegisterCommand("clear", 
+        [this](const auto& args, const auto& executor) { return HandleClear(args, executor); },
+        "Clear all game data", 
+        "clear",
+        AdminLevel::SUPER_ADMIN);
+        
+    RegisterCommand("coin", 
+        [this](const auto& args, const auto& executor) { return HandleCoin(args, executor); },
+        "Set player coins", 
+        "coin <player> <amount>",
+        AdminLevel::ADMIN);
+        
+    RegisterCommand("system", 
+        [this](const auto& args, const auto& executor) { return HandleSystem(args, executor); },
+        "Send system message", 
+        "system <message>",
+        AdminLevel::MODERATOR);
+        
+    RegisterCommand("help", 
+        [this](const auto& args, const auto& executor) { return HandleHelp(args, executor); },
+        "Show available commands", 
+        "help [command]");
+        
+    RegisterCommand("admin", 
+        [this](const auto& args, const auto& executor) { return HandleAdmin(args, executor); },
+        "Set admin level", 
+        "admin <player> <level>",
+        AdminLevel::SUPER_ADMIN);
+        
+    RegisterCommand("players", 
+        [this](const auto& args, const auto& executor) { return HandleListPlayers(args, executor); },
+        "List online players", 
+        "players",
+        AdminLevel::MODERATOR);
+        
+    RegisterCommand("restart", 
+        [this](const auto& args, const auto& executor) { return HandleRestart(args, executor); },
+        "Restart game", 
+        "restart",
+        AdminLevel::SUPER_ADMIN);
+        
+    RegisterCommand("whoami", 
+        [this](const auto& args, const auto& executor) { return HandleWhoami(args, executor); },
+        "Show current user info and permissions", 
+        "whoami");
+}
+
+void CommandSystem::RegisterCommand(const std::string& name, CommandHandler handler, 
+                                  const std::string& description, const std::string& usage, 
+                                  AdminLevel requiredLevel) {
+    commandHandlers_[name] = handler;
+    commandsInfo_.emplace_back(name, description, usage, requiredLevel);
 }
 
 CommandResult CommandSystem::ExecuteCommand(const std::string& command, const std::string& executorId) {
@@ -64,15 +128,40 @@ CommandResult CommandSystem::ExecuteCommand(const std::string& command, const st
         return CommandResult(false, "Unknown command: " + commandName);
     }
     
+    // 检查权限
+    AdminLevel requiredLevel = AdminLevel::NONE;
+    for (const auto& cmdInfo : commandsInfo_) {
+        if (cmdInfo.name == commandName) {
+            requiredLevel = cmdInfo.requiredLevel;
+            break;
+        }
+    }
+    
+    if (!CheckPermission(executorId, requiredLevel)) {
+        return CommandResult(false, "Insufficient permissions for " + commandName + " command");
+    }
+    
     // 执行命令
     try {
-        return it->second(args, executorId);
+        CommandResult result = it->second(args, executorId);
+        
+        // 记录命令执行结果
+        Logger::getInstance().logCommand(executorId, command, "", result.success);
+        
+        return result;
     } catch (const std::exception& e) {
+        Logger::getInstance().log(LogLevel::ERROR, LogCategory::COMMAND, 
+                                 "Command execution error: " + std::string(e.what()));
         return CommandResult(false, "Command execution error: " + std::string(e.what()));
     }
 }
 
 bool CommandSystem::CheckPermission(const std::string& playerId, AdminLevel requiredLevel) const {
+    // 不需要权限的命令任何人都可以执行
+    if (requiredLevel == AdminLevel::NONE) {
+        return true;
+    }
+    
     auto it = admins_.find(playerId);
     if (it == admins_.end()) {
         return false;
@@ -87,6 +176,14 @@ void CommandSystem::AddAdmin(const std::string& playerId, AdminLevel level) {
 
 void CommandSystem::RemoveAdmin(const std::string& playerId) {
     admins_.erase(playerId);
+}
+
+AdminLevel CommandSystem::GetAdminLevel(const std::string& playerId) const {
+    auto it = admins_.find(playerId);
+    if (it == admins_.end()) {
+        return AdminLevel::NONE;
+    }
+    return it->second;
 }
 
 std::vector<std::string> CommandSystem::ParseCommand(const std::string& command) {
@@ -108,10 +205,6 @@ std::vector<std::string> CommandSystem::ParseCommand(const std::string& command)
 // ==================== 命令实现 ====================
 
 CommandResult CommandSystem::HandleGive(const std::vector<std::string>& args, const std::string& executorId) {
-    if (!CheckPermission(executorId, AdminLevel::ADMIN)) {
-        return CommandResult(false, "Insufficient permissions for give command");
-    }
-    
     if (args.size() < 3) {
         return CommandResult(false, "Usage: give <player> <item> [count]");
     }
@@ -146,10 +239,6 @@ CommandResult CommandSystem::HandleGive(const std::vector<std::string>& args, co
 }
 
 CommandResult CommandSystem::HandleTeleport(const std::vector<std::string>& args, const std::string& executorId) {
-    if (!CheckPermission(executorId, AdminLevel::ADMIN)) {
-        return CommandResult(false, "Insufficient permissions for tp command");
-    }
-    
     if (args.size() < 5) {
         return CommandResult(false, "Usage: tp <player> <x> <y> <z>");
     }
@@ -178,10 +267,6 @@ CommandResult CommandSystem::HandleTeleport(const std::vector<std::string>& args
 }
 
 CommandResult CommandSystem::HandleKick(const std::vector<std::string>& args, const std::string& executorId) {
-    if (!CheckPermission(executorId, AdminLevel::MODERATOR)) {
-        return CommandResult(false, "Insufficient permissions for kick command");
-    }
-    
     if (args.size() < 2) {
         return CommandResult(false, "Usage: kick <player> [reason]");
     }
@@ -200,10 +285,6 @@ CommandResult CommandSystem::HandleKick(const std::vector<std::string>& args, co
 }
 
 CommandResult CommandSystem::HandleKill(const std::vector<std::string>& args, const std::string& executorId) {
-    if (!CheckPermission(executorId, AdminLevel::MODERATOR)) {
-        return CommandResult(false, "Insufficient permissions for kill command");
-    }
-    
     if (args.size() < 2) {
         return CommandResult(false, "Usage: kill <player>");
     }
@@ -226,10 +307,6 @@ CommandResult CommandSystem::HandleKill(const std::vector<std::string>& args, co
 }
 
 CommandResult CommandSystem::HandleClear(const std::vector<std::string>& args, const std::string& executorId) {
-    if (!CheckPermission(executorId, AdminLevel::SUPER_ADMIN)) {
-        return CommandResult(false, "Insufficient permissions for clear command");
-    }
-    
     // 重置游戏状态
     gameLogic_.ResetGameState();
     
@@ -237,10 +314,6 @@ CommandResult CommandSystem::HandleClear(const std::vector<std::string>& args, c
 }
 
 CommandResult CommandSystem::HandleCoin(const std::vector<std::string>& args, const std::string& executorId) {
-    if (!CheckPermission(executorId, AdminLevel::ADMIN)) {
-        return CommandResult(false, "Insufficient permissions for coin command");
-    }
-    
     if (args.size() < 3) {
         return CommandResult(false, "Usage: coin <player> <amount>");
     }
@@ -270,10 +343,6 @@ CommandResult CommandSystem::HandleCoin(const std::vector<std::string>& args, co
 }
 
 CommandResult CommandSystem::HandleSystem(const std::vector<std::string>& args, const std::string& executorId) {
-    if (!CheckPermission(executorId, AdminLevel::MODERATOR)) {
-        return CommandResult(false, "Insufficient permissions for system command");
-    }
-    
     if (args.size() < 2) {
         return CommandResult(false, "Usage: system <message>");
     }
@@ -289,28 +358,38 @@ CommandResult CommandSystem::HandleSystem(const std::vector<std::string>& args, 
 }
 
 CommandResult CommandSystem::HandleHelp(const std::vector<std::string>& args, const std::string& executorId) {
-    std::string helpText = 
-        "Available commands:\n"
-        "  give <player> <item> [count]    - Give item to player\n"
-        "  tp <player> <x> <y> <z>         - Teleport player\n"
-        "  kick <player> [reason]          - Kick player from game\n"
-        "  kill <player>                   - Kill player\n"
-        "  clear                           - Clear all game data\n"
-        "  coin <player> <amount>          - Set player coins\n"
-        "  system <message>                - Send system message\n"
-        "  admin <player> <level>          - Set admin level\n"
-        "  players                         - List online players\n"
-        "  restart                         - Restart game\n"
-        "  help                            - Show this help";
+    if (args.size() > 1) {
+        // 显示特定命令的详细帮助
+        std::string commandName = args[1];
+        std::transform(commandName.begin(), commandName.end(), commandName.begin(), ::tolower);
+        
+        for (const auto& cmdInfo : commandsInfo_) {
+            if (cmdInfo.name == commandName) {
+                std::string helpText = cmdInfo.name + " - " + cmdInfo.description + "\n";
+                helpText += "Usage: " + cmdInfo.usage + "\n";
+                helpText += "Required Permission: " + AdminLevelToString(cmdInfo.requiredLevel);
+                return CommandResult(true, helpText);
+            }
+        }
+        return CommandResult(false, "Unknown command: " + commandName);
+    }
+    
+    // 显示所有命令的简要帮助
+    std::string helpText = "Available commands:\n";
+    AdminLevel userLevel = GetAdminLevel(executorId);
+    
+    for (const auto& cmdInfo : commandsInfo_) {
+        // 只显示用户有权限执行的命令
+        if (CheckPermission(executorId, cmdInfo.requiredLevel)) {
+            helpText += "  " + cmdInfo.name + " - " + cmdInfo.description + "\n";
+        }
+    }
+    helpText += "Use 'help <command>' for detailed information about a specific command.";
     
     return CommandResult(true, helpText);
 }
 
 CommandResult CommandSystem::HandleAdmin(const std::vector<std::string>& args, const std::string& executorId) {
-    if (!CheckPermission(executorId, AdminLevel::SUPER_ADMIN)) {
-        return CommandResult(false, "Insufficient permissions for admin command");
-    }
-    
     if (args.size() < 3) {
         return CommandResult(false, "Usage: admin <player> <level>");
     }
@@ -319,7 +398,7 @@ CommandResult CommandSystem::HandleAdmin(const std::vector<std::string>& args, c
     int level = std::stoi(args[2]);
     
     if (level < 0 || level > 3) {
-        return CommandResult(false, "Admin level must be 0-3");
+        return CommandResult(false, "Admin level must be 0-3 (0=None, 1=Moderator, 2=Admin, 3=Super Admin)");
     }
     
     AdminLevel adminLevel = static_cast<AdminLevel>(level);
@@ -329,15 +408,12 @@ CommandResult CommandSystem::HandleAdmin(const std::vector<std::string>& args, c
         return CommandResult(true, "Removed admin privileges from " + playerId);
     } else {
         AddAdmin(playerId, adminLevel);
-        return CommandResult(true, "Set admin level " + std::to_string(level) + " for " + playerId);
+        return CommandResult(true, "Set admin level " + std::to_string(level) + " (" + 
+                            AdminLevelToString(adminLevel) + ") for " + playerId);
     }
 }
 
 CommandResult CommandSystem::HandleListPlayers(const std::vector<std::string>& args, const std::string& executorId) {
-    if (!CheckPermission(executorId, AdminLevel::MODERATOR)) {
-        return CommandResult(false, "Insufficient permissions for players command");
-    }
-    
     auto onlinePlayers = playerManager_.GetOnlinePlayers();
     if (onlinePlayers.empty()) {
         return CommandResult(true, "No players online");
@@ -347,17 +423,20 @@ CommandResult CommandSystem::HandleListPlayers(const std::vector<std::string>& a
     for (const auto& playerId : onlinePlayers) {
         PlayerData data = playerManager_.GetPlayerData(playerId);
         result += "  " + playerId + " - Coins: " + std::to_string(data.totalCoins) + 
-                 ", Games: " + std::to_string(data.gamesPlayed) + "\n";
+                 ", Games: " + std::to_string(data.gamesPlayed);
+        
+        // 显示管理员状态
+        AdminLevel level = GetAdminLevel(playerId);
+        if (level != AdminLevel::NONE) {
+            result += ", Permission: " + AdminLevelToString(level);
+        }
+        result += "\n";
     }
     
     return CommandResult(true, result);
 }
 
 CommandResult CommandSystem::HandleRestart(const std::vector<std::string>& args, const std::string& executorId) {
-    if (!CheckPermission(executorId, AdminLevel::SUPER_ADMIN)) {
-        return CommandResult(false, "Insufficient permissions for restart command");
-    }
-    
     // 重置游戏状态
     gameLogic_.ResetGameState();
     
@@ -365,6 +444,25 @@ CommandResult CommandSystem::HandleRestart(const std::vector<std::string>& args,
     // 目前只是重置玩家状态和游戏进度
     
     return CommandResult(true, "Game restarted - all players reset to start position");
+}
+
+CommandResult CommandSystem::HandleWhoami(const std::vector<std::string>& args, const std::string& executorId) {
+    AdminLevel level = GetAdminLevel(executorId);
+    
+    std::string result = "User: " + executorId + "\n";
+    result += "Permission Level: " + AdminLevelToString(level) + "\n";
+    
+    // 显示可用的命令数量
+    int availableCommands = 0;
+    for (const auto& cmdInfo : commandsInfo_) {
+        if (CheckPermission(executorId, cmdInfo.requiredLevel)) {
+            availableCommands++;
+        }
+    }
+    result += "Available Commands: " + std::to_string(availableCommands) + " out of " + 
+              std::to_string(commandsInfo_.size());
+    
+    return CommandResult(true, result);
 }
 
 // ==================== 工具函数 ====================
@@ -416,11 +514,21 @@ bool CommandSystem::IsValidPlayer(const std::string& playerId) {
     return playerManager_.IsSessionValid(playerId);
 }
 
-// 工具函数：将字符串玩家ID转换为整数（用于GameLogic）
 int CommandSystem::ConvertPlayerIdToInt(const std::string& playerId) {
     try {
         return std::stoi(playerId);
     } catch (const std::exception&) {
         return -1; // 无效的玩家ID
+    }
+}
+
+std::string CommandSystem::AdminLevelToString(AdminLevel level) const {
+    switch (level) {
+        case AdminLevel::NONE: return "None";
+        case AdminLevel::MODERATOR: return "Moderator";
+        case AdminLevel::ADMIN: return "Admin";
+        case AdminLevel::SUPER_ADMIN: return "Super Admin";
+        case AdminLevel::ROOT: return "Root";
+        default: return "Unknown";
     }
 }
