@@ -253,16 +253,7 @@ void NetworkManager::Impl::handleNewConnection(SOCKET clientSocket, const std::s
         attempts++;
         std::this_thread::sleep_for(std::chrono::milliseconds(20)); // 更长的等待时间
     }
-    
-    if (totalBytesReceived > 0 && !request.empty()) {
-        Logger::getInstance().debug(LogCategory::NETWORK, 
-            "收到握手请求 - IP: " + clientIp + " - 长度: " + std::to_string(request.length()) +
-            " - 尝试次数: " + std::to_string(attempts));
-        
-        // 记录请求的前200个字符用于调试
-        std::string requestPreview = request.substr(0, std::min(200, (int)request.length()));
-        Logger::getInstance().debug(LogCategory::NETWORK, "请求预览: " + requestPreview);
-    
+
     if (totalBytesReceived > 0 && !request.empty()) {
         Logger::getInstance().debug(LogCategory::NETWORK, 
             "收到握手请求 - IP: " + clientIp + " - 长度: " + std::to_string(request.length()));
