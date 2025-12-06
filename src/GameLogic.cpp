@@ -9,7 +9,7 @@ GameLogic::GameLogic() {
 }
 
 GameLogic::~GameLogic() {
-    // 清理资源
+    // TODO:清理资源
 }
 
 bool GameLogic::Initialize(const std::vector<std::vector<std::vector<bool>>>& mazeLayout,

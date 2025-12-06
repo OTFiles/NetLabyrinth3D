@@ -120,7 +120,7 @@ bool readCharImmediate(char& ch) {
 
 // 信号处理函数
 void signalHandler(int signal) {
-    std::cout << "\n接收到信号 " << signal << ", 正在优雅关闭服务器..." << std::endl;
+    std::cout << "\n接收到信号 " << signal << ", 正在关闭服务器..." << std::endl;
     g_shutdownRequested = true;
 }
 
@@ -257,7 +257,7 @@ void consoleCommandThread(CommandSystem& commandSystem) {
 
 // 跨平台清理函数
 void cleanupResources() {
-    // 这里可以添加其他需要清理的资源
+    // TODO:添加其他需要清理的资源
     std::cout << "资源清理完成" << std::endl;
 }
 

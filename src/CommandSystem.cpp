@@ -21,7 +21,7 @@ CommandSystem::CommandSystem(GameLogic& gameLogic, PlayerManager& playerManager)
 }
 
 CommandSystem::~CommandSystem() {
-    // 清理资源
+    // TODO:清理资源
 }
 
 void CommandSystem::RegisterCommands() {

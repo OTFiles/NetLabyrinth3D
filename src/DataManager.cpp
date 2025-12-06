@@ -10,6 +10,7 @@
 // nlohmann/json头文件包含
 // 如果使用系统包管理器安装，通常直接包含
 // 如果使用本地版本，通过HAS_LOCAL_NLOHMANN标识
+// 兼容性超强的ヾ(´∀｀。ヾ)
 #ifdef HAS_LOCAL_NLOHMANN
     #include "nlohmann/json.hpp"
 #else
