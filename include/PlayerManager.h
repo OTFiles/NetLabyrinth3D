@@ -51,6 +51,9 @@ public:
     // 检查会话有效性
     bool IsSessionValid(const std::string& playerId) const;
     
+    // 检查玩家ID是否有效
+    bool IsValidPlayerId(const std::string& playerId) const;
+    
     // 通过MAC地址或Cookie查找玩家
     std::string FindPlayerByIdentifier(const std::string& macAddress, const std::string& cookie = "") const;
     

@@ -527,4 +527,81 @@ class MazeGame {
 // 启动游戏
 window.addEventListener('DOMContentLoaded', () => {
     window.game = new MazeGame();
+    
+    // 添加测试连接按钮事件
+    const testButton = document.getElementById('testConnection');
+    if (testButton) {
+        testButton.addEventListener('click', () => {
+            const playerName = document.getElementById('playerName').value || 'TestPlayer';
+            const serverAddress = document.getElementById('serverAddress').value || 'localhost:8080';
+            
+            window.game.log('开始测试连接...', 'network');
+            window.game.uiManager.showMessage('正在测试连接...', 'info');
+            
+            // 测试API连接
+            fetch(`http://${serverAddress}/api/config`)
+                .then(response => response.json())
+                .then(config => {
+                    window.game.log('API连接成功', 'network');
+                    window.game.log(`WebSocket端口: ${config.websocketPort}`, 'network');
+                    
+                    // 测试WebSocket连接
+                    const testSocket = new WebSocket(`ws://${serverAddress.split(':')[0]}:${config.websocketPort}/`);
+                    
+                    testSocket.onopen = () => {
+                        window.game.log('WebSocket连接成功', 'network');
+                        
+                        // 发送测试认证消息
+                        const authMessage = {
+                            type: 'auth',
+                            playerId: 'test_' + Math.random().toString(36).substr(2, 9),
+                            playerName: playerName,
+                            token: ''
+                        };
+                        
+                        testSocket.send(JSON.stringify(authMessage));
+                        window.game.log('发送测试认证消息', 'network');
+                    };
+                    
+                    testSocket.onmessage = (event) => {
+                        try {
+                            const data = JSON.parse(event.data);
+                            if (data.type === 'auth_success') {
+                                window.game.log('✅ 测试成功！认证已通过', 'network');
+                                window.game.uiManager.showMessage('连接测试成功！修复有效！', 'success');
+                            } else if (data.type === 'auth_failed') {
+                                window.game.log('❌ 认证失败', 'error');
+                                window.game.uiManager.showMessage('认证失败: ' + data.message, 'error');
+                            }
+                        } catch (e) {
+                            window.game.log('收到非JSON消息', 'warning');
+                        }
+                        
+                        // 关闭测试连接
+                        testSocket.close();
+                    };
+                    
+                    testSocket.onerror = (error) => {
+                        window.game.log('WebSocket连接错误', 'error');
+                        window.game.uiManager.showMessage('WebSocket连接失败', 'error');
+                    };
+                    
+                    testSocket.onclose = () => {
+                        window.game.log('测试连接已关闭', 'network');
+                    };
+                    
+                    // 10秒超时
+                    setTimeout(() => {
+                        if (testSocket.readyState === WebSocket.OPEN) {
+                            testSocket.close();
+                            window.game.uiManager.showMessage('连接测试超时', 'warning');
+                        }
+                    }, 10000);
+                })
+                .catch(error => {
+                    window.game.log('API连接失败: ' + error.message, 'error');
+                    window.game.uiManager.showMessage('API连接失败: ' + error.message, 'error');
+                });
+        });
+    }
 });

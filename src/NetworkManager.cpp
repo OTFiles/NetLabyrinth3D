@@ -138,16 +138,22 @@ void NetworkManager::Impl::serverThreadFunc() {
         
         // 如果没有有效的socket，等待一段时间后继续
         if (maxSocket == -1) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            // 减少睡眠时间以提高响应性
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
             continue;
         }
         
-        // 设置超时
+        // 设置超时 - 减少超时时间以提高响应性
         timeval timeout;
         timeout.tv_sec = 0;
-        timeout.tv_usec = 100000; // 100ms
+        timeout.tv_usec = 50000; // 50ms
         
         int activity = select(maxSocket + 1, &readfds, nullptr, nullptr, &timeout);
+        
+        // 检查是否收到停止信号
+        if (!running) {
+            break;
+        }
         
         if (activity < 0 && running) {
             // 在非Windows系统上，EINTR是正常的中断，不需要记录错误
@@ -158,6 +164,9 @@ void NetworkManager::Impl::serverThreadFunc() {
                 Logger::getInstance().error(LogCategory::NETWORK, "select error: " + std::string(strerror(errno)));
             }
 #endif
+            continue;
+        } else if (activity == 0) {
+            // 超时，继续循环检查running状态
             continue;
         }
         
@@ -278,10 +287,7 @@ void NetworkManager::Impl::handleNewConnection(SOCKET clientSocket, const std::s
                 " | 客户端ID: " + std::to_string(clientId) + 
                 " | 当前连接数: " + std::to_string(clients.size()));
             
-            // 通知回调
-            if (messageCallback) {
-                messageCallback(clientId, "CONNECT");
-            }
+            // 不再发送CONNECT消息，等待客户端发送认证消息
         } else {
             Logger::getInstance().warning(LogCategory::NETWORK, 
                 "WebSocket握手失败 - IP: " + clientIp);
@@ -709,23 +715,36 @@ void NetworkManager::stopServer() {
         return;
     }
 
+    // 首先设置停止标志
     m_impl->running = false;
     
-    // 先唤醒select
+    // 先唤醒select循环
     if (m_impl->serverSocket != INVALID_SOCKET) {
         // 创建一个临时连接来唤醒select
         SOCKET wakeupSocket = socket(AF_INET, SOCK_STREAM, 0);
         if (wakeupSocket != INVALID_SOCKET) {
+            // 设置为非阻塞
+#ifdef _WIN32
+            u_long mode = 1;
+            ioctlsocket(wakeupSocket, FIONBIO, &mode);
+#else
+            int flags = fcntl(wakeupSocket, F_GETFL, 0);
+            fcntl(wakeupSocket, F_SETFL, flags | O_NONBLOCK);
+#endif
+            
             sockaddr_in serverAddr;
             serverAddr.sin_family = AF_INET;
             serverAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
             serverAddr.sin_port = htons(m_impl->serverPort);
             
-            // 非阻塞连接，只是为了唤醒select
+            // 尝试连接，只是为了唤醒select
             connect(wakeupSocket, (sockaddr*)&serverAddr, sizeof(serverAddr));
             closesocket(wakeupSocket);
         }
     }
+    
+    // 给服务器线程一些时间来响应停止信号
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
     
     // 关闭所有客户端连接
     {
@@ -744,22 +763,39 @@ void NetworkManager::stopServer() {
         m_impl->serverSocket = INVALID_SOCKET;
     }
     
-    // 等待服务器线程结束，但设置超时
+    // 等待服务器线程结束，但设置合理的超时
     if (m_impl->serverThread.joinable()) {
-        // 等待最多3秒
-        for (int i = 0; i < 30; ++i) {
-            if (m_impl->serverThread.joinable()) {
-                // 使用try_join_for等待100ms
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            } else {
+        auto startTime = std::chrono::steady_clock::now();
+        const auto maxWaitTime = std::chrono::milliseconds(1500); // 1.5秒超时
+        
+        bool threadJoined = false;
+        while (!threadJoined) {
+            auto elapsed = std::chrono::steady_clock::now() - startTime;
+            if (elapsed > maxWaitTime) {
+                // 超时，记录警告并分离线程
+                m_impl->serverThread.detach();
+                Logger::getInstance().warning(LogCategory::NETWORK, "WebSocket server thread detached after timeout");
+                threadJoined = true;
                 break;
             }
-        }
-        
-        // 如果线程还在运行，强制分离
-        if (m_impl->serverThread.joinable()) {
-            m_impl->serverThread.detach();
-            Logger::getInstance().warning(LogCategory::NETWORK, "WebSocket server thread forced to detach");
+            
+            // 尝试等待线程结束
+            try {
+                // 使用短时间睡眠避免CPU占用过高
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                
+                // 检查线程是否已经结束
+                // 由于没有非阻塞join，我们使用超时机制
+                if (elapsed > std::chrono::milliseconds(500)) {
+                    // 超过500ms后，尝试join（可能会阻塞，但应该很快返回）
+                    m_impl->serverThread.join();
+                    threadJoined = true;
+                }
+            } catch (const std::exception& e) {
+                Logger::getInstance().error(LogCategory::NETWORK, "Exception while waiting for server thread: " + std::string(e.what()));
+                m_impl->serverThread.detach();
+                threadJoined = true;
+            }
         }
     }
     

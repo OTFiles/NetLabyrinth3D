@@ -112,36 +112,49 @@ class NetworkClient {
                     }
                 }, 10000);
                 
-                // 认证成功标志
+                // 认证成功标志 - 增加超时时间
                 let authSuccess = false;
                 const authTimeout = setTimeout(() => {
                     if (!authSuccess) {
                         this.socket.close();
                         reject(new Error('认证超时'));
                     }
-                }, 5000);
+                }, 8000); // 增加到8秒
                 
                 this.socket.onopen = () => {
                     clearTimeout(connectionTimeout);
                     console.log('WebSocket connection established');
                     
-                    // 发送认证消息
-                    this.sendAuth(playerName);
+                    // 发送认证消息 - 确保消息格式正确
+                    const success = this.sendAuth(playerName);
+                    if (!success) {
+                        clearTimeout(authTimeout);
+                        reject(new Error('发送认证消息失败'));
+                    }
                 };
                 
                 this.socket.onmessage = (event) => {
                     try {
                         const data = JSON.parse(event.data);
-                        // 检查是否是认证成功消息
-                        if (data.type === 'auth_success' || data.status === 'success') {
+                        console.log('Received message:', data);
+                        
+                        // 检查是否是认证相关消息
+                        if (data.type === 'auth_success') {
                             clearTimeout(authTimeout);
                             authSuccess = true;
+                            
+                            // 保存token到本地存储
+                            if (data.token) {
+                                localStorage.setItem('playerToken', data.token);
+                            }
+                            
                             resolve();
-                        } else if (data.type === 'auth_failed' || data.status === 'failed') {
+                        } else if (data.type === 'auth_failed') {
                             clearTimeout(authTimeout);
                             reject(new Error(data.message || '认证失败'));
                         }
                         
+                        // 其他消息传递给游戏处理
                         if (this.game && typeof this.game.handleServerMessage === 'function') {
                             this.game.handleServerMessage(event.data);
                         }
@@ -204,7 +217,9 @@ class NetworkClient {
             }
         }
         
-        return `ws://${host}:${port}/`;
+        const wsUrl = `ws://${host}:${port}/`;
+        console.log('Built WebSocket URL:', wsUrl, 'from serverAddress:', serverAddress);
+        return wsUrl;
     }
 
     async fetchWithTimeout(url, options = {}) {
@@ -385,23 +400,28 @@ class NetworkClient {
         
         // 立即发送认证消息，使用服务器期望的简单格式
         if (this.socket && this.socket.readyState === WebSocket.OPEN) {
-            const authMessage = JSON.stringify({
+            const authMessage = {
                 type: 'auth',
                 playerId: playerId,
                 playerName: playerName,
                 token: token
-            });
+            };
             
             try {
-                this.socket.send(authMessage);
-                this.game.log(`发送认证消息: ${playerName}`, 'network');
+                const messageString = JSON.stringify(authMessage);
+                this.socket.send(messageString);
+                this.game.log(`发送认证消息: ${playerName} (ID: ${playerId})`, 'network');
+                console.log('Auth message sent:', authMessage);
                 return true;
             } catch (error) {
                 this.game.log(`发送认证消息失败: ${error.message}`, 'error');
+                console.error('Failed to send auth message:', error);
                 return false;
             }
+        } else {
+            this.game.log(`WebSocket未就绪，无法发送认证消息`, 'error');
+            return false;
         }
-        return false;
     }
 
     // 生成玩家ID

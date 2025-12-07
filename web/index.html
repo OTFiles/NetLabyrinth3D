@@ -200,6 +200,31 @@
 
         .btn-primary:hover {
             background-color: #2980b9;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+        }
+
+        .btn-secondary {
+            background-color: #6c757d;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            display: block;
+            width: 100%;
+            margin-top: 10px;
+        }
+
+        .btn-secondary:hover {
+            background-color: #5a6268;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
         }
 
         .tips {
@@ -948,6 +973,7 @@
                 <small class="input-hint">请输入Web服务器地址（通常为8080端口）</small>
             </div>
             <button id="connectButton" class="btn-primary">进入游戏</button>
+            <button id="testConnection" class="btn-secondary" style="margin-top: 10px; background-color: #6c757d;">测试连接</button>
             <div class="tips">
                 <h3>游戏提示：</h3>
                 <ul>

@@ -237,10 +237,11 @@ std::string WebServer::handleRequest(const std::string& request) {
     
     // Logger::getInstance().info(LogCategory::WEB, "HTTP请求 - 方法: " + method + " | 路径: " + path + " | User-Agent: " + userAgent);
     
-    // 只处理GET请求
-    if (method != "GET") {
+    // 处理GET和HEAD请求
+    bool isHeadRequest = (method == "HEAD");
+    if (method != "GET" && method != "HEAD") {
         Logger::getInstance().warning(LogCategory::WEB, "不支持的HTTP方法 - 方法: " + method + " | 路径: " + path);
-        return buildHttpResponse(405, "Method Not Allowed", "Only GET method is supported", "text/plain");
+        return buildHttpResponse(405, "Method Not Allowed", "Only GET and HEAD methods are supported", "text/plain", false);
     }
     
     // URL解码路径
@@ -260,7 +261,7 @@ std::string WebServer::handleRequest(const std::string& request) {
             
             Logger::getInstance().debug(LogCategory::WEB, "处理API路由 - 路径: " + path + " | 响应长度: " + std::to_string(customResponse.length()));
             
-            return buildHttpResponse(200, "OK", customResponse, contentType);
+            return buildHttpResponse(200, "OK", customResponse, contentType, isHeadRequest);
         }
     }
     
@@ -272,7 +273,7 @@ std::string WebServer::handleRequest(const std::string& request) {
     // 安全检查
     if (!isSafePath(path)) {
         Logger::getInstance().warning(LogCategory::WEB, "路径安全检查失败 - 路径: " + path);
-        return buildHttpResponse(403, "Forbidden", "Access denied", "text/plain");
+        return buildHttpResponse(403, "Forbidden", "Access denied", "text/plain", isHeadRequest);
     }
     
     // 构建完整文件路径
@@ -287,12 +288,12 @@ std::string WebServer::handleRequest(const std::string& request) {
             if (!readFile(fullPath, fileContent)) {
                 Logger::getInstance().warning(LogCategory::WEB, 
                     "文件未找到 - 路径: " + path + " | 完整路径: " + fullPath);
-                return buildHttpResponse(404, "Not Found", "File not found: " + path, "text/plain");
+                return buildHttpResponse(404, "Not Found", "File not found: " + path, "text/plain", isHeadRequest);
             }
         } else {
             Logger::getInstance().warning(LogCategory::WEB, 
                 "文件未找到 - 路径: " + path + " | 完整路径: " + fullPath);
-            return buildHttpResponse(404, "Not Found", "File not found: " + path, "text/plain");
+            return buildHttpResponse(404, "Not Found", "File not found: " + path, "text/plain", isHeadRequest);
         }
     }
     
@@ -301,7 +302,7 @@ std::string WebServer::handleRequest(const std::string& request) {
     
     Logger::getInstance().debug(LogCategory::WEB, "提供静态文件 - 路径: " + path + " | 类型: " + contentType + " | 大小: " + std::to_string(fileContent.length()) + " bytes");
     
-    return buildHttpResponse(200, "OK", fileContent, contentType);
+    return buildHttpResponse(200, "OK", fileContent, contentType, isHeadRequest);
 }
 
 bool WebServer::parseHttpRequest(const std::string& request, 
@@ -336,7 +337,8 @@ bool WebServer::parseHttpRequest(const std::string& request,
 std::string WebServer::buildHttpResponse(int statusCode, 
                                         const std::string& statusText,
                                         const std::string& content, 
-                                        const std::string& contentType) {
+                                        const std::string& contentType,
+                                        bool isHeadRequest) {
     std::stringstream response;
     
     response << "HTTP/1.1 " << statusCode << " " << statusText << "\r\n";
@@ -345,7 +347,11 @@ std::string WebServer::buildHttpResponse(int statusCode,
     response << "Connection: close\r\n";
     response << "Access-Control-Allow-Origin: *\r\n";
     response << "\r\n";
-    response << content;
+    
+    // HEAD请求不返回内容体
+    if (!isHeadRequest) {
+        response << content;
+    }
     
     return response.str();
 }

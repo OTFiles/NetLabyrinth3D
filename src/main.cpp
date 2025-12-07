@@ -7,6 +7,7 @@
 #include <atomic>
 #include <csignal>
 #include <cstdlib>
+#include <nlohmann/json.hpp>
 
 #include "Logger.h"
 #include "DataManager.h"
@@ -17,6 +18,8 @@
 #include "CommandSystem.h"
 #include "WebServer.h"
 #include "GlobalState.h"
+
+using json = nlohmann::json;
 
 // 全局变量声明
 extern std::atomic<bool> g_shutdownRequested;
@@ -122,6 +125,12 @@ bool readCharImmediate(char& ch) {
 void signalHandler(int signal) {
     std::cout << "\n接收到信号 " << signal << ", 正在关闭服务器..." << std::endl;
     g_shutdownRequested = true;
+    
+    // 强制退出命令输入模式
+    if (g_commandInputInProgress) {
+        // 恢复终端设置
+        std::cout << "\n强制退出命令输入模式..." << std::endl;
+    }
 }
 
 // 命令行参数解析
@@ -202,11 +211,29 @@ void consoleCommandThread(CommandSystem& commandSystem) {
         input.clear();
         bool inputComplete = false;
         
+        // 改进的退出检测：使用超时机制
+        auto lastActivity = std::chrono::steady_clock::now();
+        const auto timeoutDuration = std::chrono::milliseconds(50); // 减少超时时间，提高响应性
+        
         while (!g_shutdownRequested && !inputComplete) {
             // 短暂睡眠以避免高CPU占用
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
             
+            // 检查超时，确保能响应关闭信号
+            auto now = std::chrono::steady_clock::now();
+            if (now - lastActivity > timeoutDuration) {
+                // 定期检查关闭状态
+                if (g_shutdownRequested) {
+                    std::cout << "\n检测到关闭信号，正在退出..." << std::endl;
+                    break;
+                }
+                lastActivity = now;
+            }
+
+            
             if (readCharImmediate(ch)) {
+                lastActivity = now; // 更新活动时间
+                
                 if (ch == '\n' || ch == '\r') {
                     // 回车键，结束输入
                     std::cout << std::endl;
@@ -223,6 +250,7 @@ void consoleCommandThread(CommandSystem& commandSystem) {
                     std::cout << "^C" << std::endl;
                     g_shutdownRequested = true;
                     inputComplete = true;
+                    break; // 立即退出
                 } else if (ch >= 32 && ch <= 126) { // 可打印字符
                     std::cout << ch;
                     input += ch;
@@ -238,6 +266,10 @@ void consoleCommandThread(CommandSystem& commandSystem) {
         
         g_commandInputInProgress = false;
         g_currentInputLine.clear();
+        
+        if (g_shutdownRequested) {
+            break; // 立即退出
+        }
         
         if (input.empty()) continue;
         
@@ -389,6 +421,99 @@ int main(int argc, char* argv[]) {
         networkManager.setMessageCallback([&](int clientId, const std::string& message) {
             // 这里处理网络消息
             logger.debug(LogCategory::NETWORK, "收到来自客户端 " + std::to_string(clientId) + " 的消息: " + message);
+            
+            // 处理特殊消息类型
+            if (message == "CONNECT") {
+                logger.info(LogCategory::NETWORK, "客户端连接: " + std::to_string(clientId));
+                return;
+            }
+            
+            if (message == "DISCONNECT") {
+                logger.info(LogCategory::NETWORK, "客户端断开: " + std::to_string(clientId));
+                // 注销玩家
+                // 注意：这里需要知道玩家ID，但目前没有存储映射关系
+                return;
+            }
+            
+            // 尝试解析JSON消息
+            try {
+                nlohmann::json jsonData = nlohmann::json::parse(message);
+                std::string messageType = jsonData.value("type", "");
+                
+                if (messageType == "auth") {
+                    // 处理认证消息
+                    std::string playerId = jsonData.value("playerId", "");
+                    std::string playerName = jsonData.value("playerName", "");
+                    std::string token = jsonData.value("token", "");
+                    
+                    logger.info(LogCategory::NETWORK, "处理认证请求 - 玩家: " + playerName + ", ID: " + playerId);
+                    
+                    // 改进的认证逻辑：如果没有有效的playerId，生成一个新的
+                    if (playerId.empty() || !playerManager->IsValidPlayerId(playerId)) {
+                        // 使用客户端IP作为MAC地址的替代，使用playerName作为cookie的替代
+                        std::string clientIdentifier = "client_" + std::to_string(clientId);
+                        playerId = playerManager->RegisterPlayer(clientIdentifier, playerName);
+                        
+                        if (playerId.empty()) {
+                            // 注册失败，发送错误响应
+                            nlohmann::json authResponse;
+                            authResponse["type"] = "auth_failed";
+                            authResponse["message"] = "无法注册玩家，请重试";
+                            authResponse["status"] = "failed";
+                            
+                            networkManager.sendToClient(clientId, authResponse.dump());
+                            logger.error(LogCategory::PLAYER, "玩家注册失败: " + playerName);
+                            return; // 使用return而不是continue，因为我们不在循环中
+                        }
+                    }
+                    
+                    // 登录玩家
+                    if (playerManager->LoginPlayer(playerId)) {
+                        // 发送认证成功消息
+                        nlohmann::json authResponse;
+                        authResponse["type"] = "auth_success";
+                        authResponse["playerId"] = playerId;
+                        authResponse["playerName"] = playerName;
+                        authResponse["status"] = "success";
+                        authResponse["token"] = "session_" + std::to_string(std::time(nullptr)); // 生成简单token
+                        
+                        networkManager.sendToClient(clientId, authResponse.dump());
+                        
+                        // 发送初始游戏数据
+                        nlohmann::json playerDataResponse;
+                        playerDataResponse["type"] = "player_data";
+                        playerDataResponse["playerId"] = playerId;
+                        playerDataResponse["playerName"] = playerName;
+                        playerDataResponse["coins"] = 0; // 初始金币
+                        playerDataResponse["position"] = {{"x", 0}, {"y", 0}, {"z", 0}};
+                        
+                        networkManager.sendToClient(clientId, playerDataResponse.dump());
+                        
+                        logger.info(LogCategory::PLAYER, "玩家认证成功: " + playerName + " (ID: " + playerId + ")");
+                    } else {
+                        // 发送认证失败消息
+                        nlohmann::json authResponse;
+                        authResponse["type"] = "auth_failed";
+                        authResponse["message"] = "登录失败，请重试";
+                        authResponse["status"] = "failed";
+                        
+                        networkManager.sendToClient(clientId, authResponse.dump());
+                        
+                        logger.warning(LogCategory::PLAYER, "玩家登录失败: " + playerName);
+                    }
+                } else if (messageType == "ping") {
+                    // 处理心跳消息
+                    nlohmann::json pongResponse;
+                    pongResponse["type"] = "pong";
+                    pongResponse["timestamp"] = jsonData.value("timestamp", 0);
+                    
+                    networkManager.sendToClient(clientId, pongResponse.dump());
+                }
+                // 可以在这里添加更多消息类型的处理
+                
+            } catch (const std::exception& e) {
+                logger.error(LogCategory::NETWORK, "消息解析错误: " + std::string(e.what()));
+            }
         });
         
         logger.info(LogCategory::NETWORK, "网络管理器初始化完成，端口: " + std::to_string(networkPort));
@@ -479,21 +604,32 @@ int main(int argc, char* argv[]) {
         networkManager.stopServer();
         webServer.stopServer();
         
-        // 停止控制台线程
+        // 停止控制台线程 - 改进的关闭机制
         if (consoleThread.joinable()) {
+            // 先通知线程应该退出
+            g_shutdownRequested = true;
+            
             // 等待控制台线程结束，但设置超时
-            for (int i = 0; i < 10; ++i) {
-                if (consoleThread.joinable()) {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                } else {
+            auto startTime = std::chrono::steady_clock::now();
+            const auto maxWaitTime = std::chrono::seconds(2); // 最多等待2秒
+            
+            while (consoleThread.joinable()) {
+                auto elapsed = std::chrono::steady_clock::now() - startTime;
+                if (elapsed > maxWaitTime) {
+                    // 超时，强制分离
+                    consoleThread.detach();
+                    std::cout << "控制台线程已分离 (超时)" << std::endl;
                     break;
                 }
-            }
-            
-            // 如果还在运行，强制分离
-            if (consoleThread.joinable()) {
-                consoleThread.detach();
-                std::cout << "控制台线程已分离" << std::endl;
+                
+                // 短暂等待
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                
+                // 如果线程已经结束，join它
+                if (!g_commandInputInProgress) {
+                    consoleThread.join();
+                    break;
+                }
             }
         }
         

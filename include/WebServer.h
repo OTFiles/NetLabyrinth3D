@@ -61,7 +61,8 @@ private:
     std::string buildHttpResponse(int statusCode, 
                                  const std::string& statusText,
                                  const std::string& content, 
-                                 const std::string& contentType);
+                                 const std::string& contentType,
+                                 bool isHeadRequest = false);
     
     // 获取MIME类型
     std::string getMimeType(const std::string& filePath) const;

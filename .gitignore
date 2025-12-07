@@ -1,2 +1,4 @@
 build/*
 CodeSyncAssistant.py
+Data/*
+*.log

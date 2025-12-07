@@ -150,6 +150,12 @@ bool PlayerManager::IsSessionValid(const std::string& playerId) const {
     return it->second.isOnline;
 }
 
+bool PlayerManager::IsValidPlayerId(const std::string& playerId) const {
+    // 检查playerId是否存在于玩家列表中
+    auto it = players_.find(playerId);
+    return it != players_.end();
+}
+
 std::string PlayerManager::FindPlayerByIdentifier(const std::string& macAddress, const std::string& cookie) const {
     // 优先使用MAC地址查找
     auto macIt = macToPlayerId_.find(macAddress);
