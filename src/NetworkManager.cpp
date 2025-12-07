@@ -46,6 +46,7 @@ struct ClientConnection {
 class NetworkManager::Impl {
 public:
     std::atomic<bool> running{false};
+    std::atomic<bool> forceShutdown{false}; // 添加强制关闭标志
     int serverPort;
     SOCKET serverSocket;
     std::thread serverThread;
@@ -110,9 +111,17 @@ bool NetworkManager::initialize(int port) {
 }
 
 void NetworkManager::Impl::serverThreadFunc() {
+    Logger::getInstance().info(LogCategory::NETWORK, "WebSocket服务器线程启动");
+    
     fd_set readfds;
+    int loopCount = 0;
     
     while (running) {
+        loopCount++;
+        if (loopCount % 100 == 0) { // 每100次循环记录一次
+            Logger::getInstance().debug(LogCategory::NETWORK, "服务器线程循环 #" + std::to_string(loopCount) + ", running=" + (running ? "true" : "false") + ", forceShutdown=" + (forceShutdown ? "true" : "false"));
+        }
+        
         FD_ZERO(&readfds);
         
         int maxSocket = -1;
@@ -125,7 +134,15 @@ void NetworkManager::Impl::serverThreadFunc() {
         
         // 添加所有客户端socket
         {
+            auto lockStart = std::chrono::high_resolution_clock::now();
             std::lock_guard<std::mutex> lock(clientsMutex);
+            auto lockEnd = std::chrono::high_resolution_clock::now();
+            auto lockDuration = std::chrono::duration_cast<std::chrono::microseconds>(lockEnd - lockStart);
+            
+            if (loopCount % 100 == 0) { // 每100次循环记录一次锁获取时间
+                Logger::getInstance().debug(LogCategory::NETWORK, "获取客户端锁耗时: " + std::to_string(lockDuration.count()) + "μs, 客户端数: " + std::to_string(clients.size()));
+            }
+            
             for (const auto& pair : clients) {
                 if (pair.second.socket != INVALID_SOCKET) {
                     FD_SET(pair.second.socket, &readfds);
@@ -143,19 +160,23 @@ void NetworkManager::Impl::serverThreadFunc() {
             continue;
         }
         
-        // 设置超时 - 减少超时时间以提高响应性
+        // 设置更短的超时以提高响应性
         timeval timeout;
         timeout.tv_sec = 0;
-        timeout.tv_usec = 50000; // 50ms
+        timeout.tv_usec = 25000; // 25ms
         
+        auto selectStart = std::chrono::high_resolution_clock::now();
         int activity = select(maxSocket + 1, &readfds, nullptr, nullptr, &timeout);
+        auto selectEnd = std::chrono::high_resolution_clock::now();
+        auto selectDuration = std::chrono::duration_cast<std::chrono::microseconds>(selectEnd - selectStart);
         
-        // 检查是否收到停止信号
-        if (!running) {
+        // 立即检查是否收到停止信号
+        if (!running || forceShutdown) {
+            Logger::getInstance().info(LogCategory::NETWORK, "服务器线程检测到停止信号，退出循环 (running=" + std::string(running ? "true" : "false") + ", forceShutdown=" + std::string(forceShutdown ? "true" : "false") + ")");
             break;
         }
         
-        if (activity < 0 && running) {
+        if (activity < 0) {
             // 在非Windows系统上，EINTR是正常的中断，不需要记录错误
 #ifdef _WIN32
             Logger::getInstance().error(LogCategory::NETWORK, "select error");
@@ -167,7 +188,14 @@ void NetworkManager::Impl::serverThreadFunc() {
             continue;
         } else if (activity == 0) {
             // 超时，继续循环检查running状态
+            if (loopCount % 200 == 0) { // 每200次循环记录一次超时
+                Logger::getInstance().debug(LogCategory::NETWORK, "select超时，耗时: " + std::to_string(selectDuration.count()) + "μs");
+            }
             continue;
+        }
+        
+        if (loopCount % 100 == 0) { // 每100次循环记录一次活动
+            Logger::getInstance().debug(LogCategory::NETWORK, "select活动，耗时: " + std::to_string(selectDuration.count()) + "μs, 活动socket数: " + std::to_string(activity));
         }
         
         // 检查新连接
@@ -185,23 +213,22 @@ void NetworkManager::Impl::serverThreadFunc() {
         }
         
         // 检查客户端数据
-        std::vector<int> clientsToRemove;
+        std::vector<int> activeClients;
         {
             std::lock_guard<std::mutex> lock(clientsMutex);
             for (const auto& pair : clients) {
                 if (pair.second.socket != INVALID_SOCKET && FD_ISSET(pair.second.socket, &readfds)) {
-                    handleClientData(pair.first);
+                    activeClients.push_back(pair.first);
                 }
             }
         }
         
-        // 移除断开的客户端
-        for (int clientId : clientsToRemove) {
-            // 通过外部类实例调用disconnectClient
-            NetworkManager::getInstance().disconnectClient(clientId);
+        // 在锁外处理客户端数据
+        for (int clientId : activeClients) {
+            handleClientData(clientId);
         }
         
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        // 移除固定睡眠，依靠select超时来控制循环频率
     }
 }
 
@@ -288,6 +315,15 @@ void NetworkManager::Impl::handleNewConnection(SOCKET clientSocket, const std::s
                 " | 当前连接数: " + std::to_string(clients.size()));
             
             // 不再发送CONNECT消息，等待客户端发送认证消息
+            
+            // 设置socket为非阻塞模式，避免长时间等待
+#ifdef _WIN32
+            u_long mode = 1;
+            ioctlsocket(clientSocket, FIONBIO, &mode);
+#else
+            int flags = fcntl(clientSocket, F_GETFL, 0);
+            fcntl(clientSocket, F_SETFL, flags | O_NONBLOCK);
+#endif
         } else {
             Logger::getInstance().warning(LogCategory::NETWORK, 
                 "WebSocket握手失败 - IP: " + clientIp);
@@ -466,11 +502,32 @@ std::string NetworkManager::Impl::base64Encode(const std::string& input) {
 }
 
 void NetworkManager::Impl::handleClientData(int clientId) {
-    std::lock_guard<std::mutex> lock(clientsMutex);
-    auto it = clients.find(clientId);
-    if (it == clients.end()) return;
+    SOCKET clientSocket = INVALID_SOCKET;
     
-    SOCKET clientSocket = it->second.socket;
+    // 先获取socket，然后释放锁
+    {
+        std::lock_guard<std::mutex> lock(clientsMutex);
+        auto it = clients.find(clientId);
+        if (it == clients.end()) return;
+        clientSocket = it->second.socket;
+    }
+    
+    // 检查强制关闭标志
+    if (forceShutdown) {
+        return;
+    }
+    
+    // 确保socket是非阻塞的
+#ifdef _WIN32
+    u_long mode = 1;
+    ioctlsocket(clientSocket, FIONBIO, &mode);
+#else
+    int flags = fcntl(clientSocket, F_GETFL, 0);
+    if (flags != -1) {
+        fcntl(clientSocket, F_SETFL, flags | O_NONBLOCK);
+    }
+#endif
+    
     std::vector<uint8_t> buffer(4096);
     
     int bytesReceived = recv(clientSocket, (char*)buffer.data(), buffer.size(), 0);
@@ -478,40 +535,55 @@ void NetworkManager::Impl::handleClientData(int clientId) {
     if (bytesReceived > 0) {
         buffer.resize(bytesReceived);
         
-        if (it->second.handshakeCompleted) {
-            // WebSocket消息
-            std::string message = decodeWebSocketFrame(buffer);
-            if (!message.empty()) {
-                // 记录接收到的消息（限制长度以避免日志过大）
-                std::string logMessage = message;
-                if (logMessage.length() > 200) {
-                    logMessage = logMessage.substr(0, 200) + "...[截断]";
+        // 重新获取锁来检查握手状态和处理消息
+        {
+            std::lock_guard<std::mutex> lock(clientsMutex);
+            auto it = clients.find(clientId);
+            if (it == clients.end()) return;
+            
+            if (it->second.handshakeCompleted) {
+                // WebSocket消息
+                std::string message = decodeWebSocketFrame(buffer);
+                if (!message.empty()) {
+                    // 记录接收到的消息（限制长度以避免日志过大）
+                    std::string logMessage = message;
+                    if (logMessage.length() > 200) {
+                        logMessage = logMessage.substr(0, 200) + "...[截断]";
+                    }
+                    Logger::getInstance().debug(LogCategory::NETWORK, 
+                        "收到客户端消息 - ID: " + std::to_string(clientId) + 
+                        " | IP: " + it->second.ipAddress + 
+                        " | 长度: " + std::to_string(bytesReceived) + 
+                        " | 内容: " + logMessage);
+                    
+                    if (messageCallback) {
+                        messageCallback(clientId, message);
+                    }
+                } else {
+                    Logger::getInstance().warning(LogCategory::NETWORK,
+                        "WebSocket消息解码失败 - ID: " + std::to_string(clientId) +
+                        " | IP: " + it->second.ipAddress);
                 }
-                Logger::getInstance().debug(LogCategory::NETWORK, 
-                    "收到客户端消息 - ID: " + std::to_string(clientId) + 
-                    " | IP: " + it->second.ipAddress + 
-                    " | 长度: " + std::to_string(bytesReceived) + 
-                    " | 内容: " + logMessage);
-                
-                if (messageCallback) {
-                    messageCallback(clientId, message);
-                }
-            } else {
-                Logger::getInstance().warning(LogCategory::NETWORK,
-                    "WebSocket消息解码失败 - ID: " + std::to_string(clientId) +
-                    " | IP: " + it->second.ipAddress);
             }
         }
     } else if (bytesReceived == 0) {
         // 正常断开连接
         closesocket(clientSocket);
-        std::string ip = it->second.ipAddress;
-        clients.erase(it);
         
-        Logger::getInstance().info(LogCategory::NETWORK, 
-            "客户端断开连接 - IP: " + ip + 
-            " | ID: " + std::to_string(clientId) + 
-            " | 剩余连接数: " + std::to_string(clients.size()));
+        // 重新获取锁来移除客户端
+        {
+            std::lock_guard<std::mutex> lock(clientsMutex);
+            auto it = clients.find(clientId);
+            if (it != clients.end()) {
+                std::string ip = it->second.ipAddress;
+                clients.erase(it);
+                
+                Logger::getInstance().info(LogCategory::NETWORK, 
+                    "客户端断开连接 - IP: " + ip + 
+                    " | ID: " + std::to_string(clientId) + 
+                    " | 剩余连接数: " + std::to_string(clients.size()));
+            }
+        }
         
         if (messageCallback) {
             messageCallback(clientId, "DISCONNECT");
@@ -525,19 +597,27 @@ void NetworkManager::Impl::handleClientData(int clientId) {
         if (errno != EWOULDBLOCK && errno != EAGAIN) {
 #endif
             closesocket(clientSocket);
-            std::string ip = it->second.ipAddress;
-            clients.erase(it);
             
-            Logger::getInstance().warning(LogCategory::NETWORK, 
-                "客户端连接异常断开 - IP: " + ip + 
-                " | ID: " + std::to_string(clientId) + 
-                " | 错误码: " + std::to_string(
+            // 重新获取锁来移除客户端
+            {
+                std::lock_guard<std::mutex> lock(clientsMutex);
+                auto it = clients.find(clientId);
+                if (it != clients.end()) {
+                    std::string ip = it->second.ipAddress;
+                    clients.erase(it);
+                    
+                    Logger::getInstance().warning(LogCategory::NETWORK, 
+                        "客户端连接异常断开 - IP: " + ip + 
+                        " | ID: " + std::to_string(clientId) + 
+                        " | 错误码: " + std::to_string(
 #ifdef _WIN32
-                error
+                        error
 #else
-                errno
+                        errno
 #endif
-                ));
+                        ));
+                }
+            }
             
             if (messageCallback) {
                 messageCallback(clientId, "DISCONNECT");
@@ -712,98 +792,121 @@ bool NetworkManager::startServer() {
 
 void NetworkManager::stopServer() {
     if (!m_impl->running) {
+        Logger::getInstance().info(LogCategory::NETWORK, "WebSocket服务器未运行，无需关闭");
         return;
     }
 
-    // 首先设置停止标志
-    m_impl->running = false;
+    auto startTime = std::chrono::high_resolution_clock::now();
+    Logger::getInstance().info(LogCategory::NETWORK, "开始关闭WebSocket服务器...");
     
-    // 先唤醒select循环
+    // 步骤1: 设置停止标志
+    Logger::getInstance().info(LogCategory::NETWORK, "步骤1: 设置停止标志");
+    m_impl->running = false;
+    m_impl->forceShutdown = true;
+    
+    // 步骤2: 立即关闭服务器socket以阻止新连接
+    Logger::getInstance().info(LogCategory::NETWORK, "步骤2: 关闭服务器socket");
     if (m_impl->serverSocket != INVALID_SOCKET) {
-        // 创建一个临时连接来唤醒select
-        SOCKET wakeupSocket = socket(AF_INET, SOCK_STREAM, 0);
-        if (wakeupSocket != INVALID_SOCKET) {
-            // 设置为非阻塞
-#ifdef _WIN32
-            u_long mode = 1;
-            ioctlsocket(wakeupSocket, FIONBIO, &mode);
-#else
-            int flags = fcntl(wakeupSocket, F_GETFL, 0);
-            fcntl(wakeupSocket, F_SETFL, flags | O_NONBLOCK);
-#endif
-            
-            sockaddr_in serverAddr;
-            serverAddr.sin_family = AF_INET;
-            serverAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
-            serverAddr.sin_port = htons(m_impl->serverPort);
-            
-            // 尝试连接，只是为了唤醒select
-            connect(wakeupSocket, (sockaddr*)&serverAddr, sizeof(serverAddr));
-            closesocket(wakeupSocket);
-        }
+        Logger::getInstance().info(LogCategory::NETWORK, "服务器socket有效，准备关闭");
+        closesocket(m_impl->serverSocket);
+        m_impl->serverSocket = INVALID_SOCKET;
+        Logger::getInstance().info(LogCategory::NETWORK, "服务器socket已关闭");
+    } else {
+        Logger::getInstance().info(LogCategory::NETWORK, "服务器socket已无效");
     }
     
-    // 给服务器线程一些时间来响应停止信号
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    // 步骤3: 处理客户端连接
+    Logger::getInstance().info(LogCategory::NETWORK, "步骤3: 处理客户端连接，当前有 " + std::to_string(m_impl->clients.size()) + " 个连接");
     
-    // 关闭所有客户端连接
+    // 先收集所有socket，避免在锁内进行可能阻塞的操作
+    std::vector<SOCKET> socketsToClose;
     {
+        auto lockStartTime = std::chrono::high_resolution_clock::now();
+        Logger::getInstance().info(LogCategory::NETWORK, "尝试获取客户端锁...");
         std::lock_guard<std::mutex> lock(m_impl->clientsMutex);
+        auto lockAcquiredTime = std::chrono::high_resolution_clock::now();
+        auto lockDuration = std::chrono::duration_cast<std::chrono::milliseconds>(lockAcquiredTime - lockStartTime);
+        Logger::getInstance().info(LogCategory::NETWORK, "客户端锁获取成功，耗时: " + std::to_string(lockDuration.count()) + "ms");
+        
         for (const auto& pair : m_impl->clients) {
             if (pair.second.socket != INVALID_SOCKET) {
-                closesocket(pair.second.socket);
+                socketsToClose.push_back(pair.second.socket);
+                Logger::getInstance().debug(LogCategory::NETWORK, "收集客户端socket: " + std::to_string(pair.second.socket) + " (客户端ID: " + std::to_string(pair.first) + ")");
             }
         }
         m_impl->clients.clear();
+        Logger::getInstance().info(LogCategory::NETWORK, "客户端列表已清空，释放锁");
     }
     
-    // 关闭服务器socket
-    if (m_impl->serverSocket != INVALID_SOCKET) {
-        closesocket(m_impl->serverSocket);
-        m_impl->serverSocket = INVALID_SOCKET;
-    }
-    
-    // 等待服务器线程结束，但设置合理的超时
-    if (m_impl->serverThread.joinable()) {
-        auto startTime = std::chrono::steady_clock::now();
-        const auto maxWaitTime = std::chrono::milliseconds(1500); // 1.5秒超时
+    // 步骤4: 在锁外关闭socket
+    Logger::getInstance().info(LogCategory::NETWORK, "步骤4: 关闭 " + std::to_string(socketsToClose.size()) + " 个客户端socket");
+    int closedCount = 0;
+    for (size_t i = 0; i < socketsToClose.size(); ++i) {
+        SOCKET sock = socketsToClose[i];
+        Logger::getInstance().debug(LogCategory::NETWORK, "关闭socket " + std::to_string(i+1) + "/" + std::to_string(socketsToClose.size()) + ": " + std::to_string(sock));
         
-        bool threadJoined = false;
-        while (!threadJoined) {
-            auto elapsed = std::chrono::steady_clock::now() - startTime;
-            if (elapsed > maxWaitTime) {
-                // 超时，记录警告并分离线程
-                m_impl->serverThread.detach();
-                Logger::getInstance().warning(LogCategory::NETWORK, "WebSocket server thread detached after timeout");
-                threadJoined = true;
-                break;
-            }
-            
-            // 尝试等待线程结束
-            try {
-                // 使用短时间睡眠避免CPU占用过高
-                std::this_thread::sleep_for(std::chrono::milliseconds(50));
-                
-                // 检查线程是否已经结束
-                // 由于没有非阻塞join，我们使用超时机制
-                if (elapsed > std::chrono::milliseconds(500)) {
-                    // 超过500ms后，尝试join（可能会阻塞，但应该很快返回）
-                    m_impl->serverThread.join();
-                    threadJoined = true;
-                }
-            } catch (const std::exception& e) {
-                Logger::getInstance().error(LogCategory::NETWORK, "Exception while waiting for server thread: " + std::string(e.what()));
-                m_impl->serverThread.detach();
-                threadJoined = true;
-            }
+        // 设置socket为非阻塞模式以避免阻塞
+        auto setNonBlockStart = std::chrono::high_resolution_clock::now();
+#ifdef _WIN32
+        u_long mode = 1;
+        ioctlsocket(sock, FIONBIO, &mode);
+#else
+        int flags = fcntl(sock, F_GETFL, 0);
+        if (flags != -1) {
+            fcntl(sock, F_SETFL, flags | O_NONBLOCK);
         }
+#endif
+        auto setNonBlockEnd = std::chrono::high_resolution_clock::now();
+        auto nonBlockDuration = std::chrono::duration_cast<std::chrono::milliseconds>(setNonBlockEnd - setNonBlockStart);
+        Logger::getInstance().debug(LogCategory::NETWORK, "设置非阻塞模式耗时: " + std::to_string(nonBlockDuration.count()) + "ms");
+        
+        // 尝试发送WebSocket关闭帧（非阻塞）
+        auto sendFrameStart = std::chrono::high_resolution_clock::now();
+        try {
+            std::vector<uint8_t> closeFrame = {0x88, 0x00}; // WebSocket关闭帧
+            int result = send(sock, (char*)closeFrame.data(), closeFrame.size(), MSG_NOSIGNAL);
+            auto sendFrameEnd = std::chrono::high_resolution_clock::now();
+            auto sendFrameDuration = std::chrono::duration_cast<std::chrono::milliseconds>(sendFrameEnd - sendFrameStart);
+            Logger::getInstance().debug(LogCategory::NETWORK, "发送关闭帧耗时: " + std::to_string(sendFrameDuration.count()) + "ms, 结果: " + std::to_string(result));
+        } catch (...) {
+            auto sendFrameEnd = std::chrono::high_resolution_clock::now();
+            auto sendFrameDuration = std::chrono::duration_cast<std::chrono::milliseconds>(sendFrameEnd - sendFrameStart);
+            Logger::getInstance().warning(LogCategory::NETWORK, "发送关闭帧异常，耗时: " + std::to_string(sendFrameDuration.count()) + "ms");
+        }
+        
+        // 强制关闭socket
+        auto closeSocketStart = std::chrono::high_resolution_clock::now();
+        closesocket(sock);
+        auto closeSocketEnd = std::chrono::high_resolution_clock::now();
+        auto closeSocketDuration = std::chrono::duration_cast<std::chrono::milliseconds>(closeSocketEnd - closeSocketStart);
+        Logger::getInstance().debug(LogCategory::NETWORK, "关闭socket耗时: " + std::to_string(closeSocketDuration.count()) + "ms");
+        
+        closedCount++;
+    }
+    
+    Logger::getInstance().info(LogCategory::NETWORK, "已关闭 " + std::to_string(closedCount) + " 个客户端连接");
+    
+    // 步骤5: 处理服务器线程
+    Logger::getInstance().info(LogCategory::NETWORK, "步骤5: 处理服务器线程");
+    if (m_impl->serverThread.joinable()) {
+        Logger::getInstance().info(LogCategory::NETWORK, "服务器线程可连接，准备分离");
+        auto detachStart = std::chrono::high_resolution_clock::now();
+        m_impl->serverThread.detach();
+        auto detachEnd = std::chrono::high_resolution_clock::now();
+        auto detachDuration = std::chrono::duration_cast<std::chrono::milliseconds>(detachEnd - detachStart);
+        Logger::getInstance().info(LogCategory::NETWORK, "线程分离完成，耗时: " + std::to_string(detachDuration.count()) + "ms");
+    } else {
+        Logger::getInstance().info(LogCategory::NETWORK, "服务器线程已分离或不可连接");
     }
     
 #ifdef _WIN32
+    Logger::getInstance().info(LogCategory::NETWORK, "步骤6: 清理Winsock");
     WSACleanup();
 #endif
     
-    Logger::getInstance().info(LogCategory::NETWORK, "WebSocket server stopped");
+    auto endTime = std::chrono::high_resolution_clock::now();
+    auto totalDuration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
+    Logger::getInstance().info(LogCategory::NETWORK, "WebSocket服务器关闭完成，总耗时: " + std::to_string(totalDuration.count()) + "ms");
 }
 
 void NetworkManager::sendToClient(int clientId, const std::string& message) {

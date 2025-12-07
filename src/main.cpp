@@ -600,8 +600,12 @@ int main(int argc, char* argv[]) {
         // 优雅关闭
         logger.logSystemEvent("服务器关闭", "开始优雅关闭");
         
-        // 先停止服务器
+        // 快速停止网络服务器（优先，因为它可能阻塞）
+        logger.info(LogCategory::SYSTEM, "正在关闭网络管理器...");
         networkManager.stopServer();
+        
+        // 停止Web服务器
+        logger.info(LogCategory::SYSTEM, "正在关闭Web服务器...");
         webServer.stopServer();
         
         // 停止控制台线程 - 改进的关闭机制

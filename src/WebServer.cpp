@@ -226,7 +226,10 @@ std::string WebServer::handleRequest(const std::string& request) {
     std::unordered_map<std::string, std::string> headers;
     
     if (!parseHttpRequest(request, method, path, headers)) {
-        Logger::getInstance().warning(LogCategory::WEB, "HTTP请求解析失败: " + request.substr(0, 100));
+        // 只记录非空请求的解析失败
+        if (!request.empty() && request.find("\r\n") != std::string::npos) {
+            Logger::getInstance().warning(LogCategory::WEB, "HTTP请求解析失败: " + request.substr(0, 100));
+        }
         return buildHttpResponse(400, "Bad Request", "Invalid HTTP request", "text/plain");
     }
     
